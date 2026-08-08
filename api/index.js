@@ -19,23 +19,29 @@ module.exports = async (req, res) => {
 
   // Diagnostic route: what does the source site return to THIS host's IP?
   if (req.url && req.url.startsWith('/debug')) {
-    try {
-      const r = await fetchText('https://ak.sv/movies');
-      res.setHeader('Content-Type', 'application/json');
-      return res.end(
-        JSON.stringify({
+    const candidates = [
+      'https://ak.sv/movies',
+      'https://akwam.it/movies',
+      'https://ak.sv/',
+      'https://akwam.it/',
+    ];
+    const out = [];
+    for (const u of candidates) {
+      try {
+        const r = await fetchText(u);
+        out.push({
+          url: u,
           status: r.status,
           finalUrl: r.url,
-          length: r.text.length,
           hasItems: r.text.includes('col-lg-auto'),
           challenge: /just a moment|cf-challenge|Attention Required|cf_chl/i.test(r.text),
-          snippet: r.text.slice(0, 400),
-        })
-      );
-    } catch (e) {
-      res.statusCode = 500;
-      return res.end(JSON.stringify({ error: e.message, cause: e.cause?.message }));
+        });
+      } catch (e) {
+        out.push({ url: u, error: e.message, cause: e.cause?.message });
+      }
     }
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify(out, null, 2));
   }
   router(req, res, () => {
     res.statusCode = 404;

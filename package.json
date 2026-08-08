@@ -1,0 +1,21 @@
+{
+  "name": "3rabi-stremio",
+  "version": "1.0.0",
+  "description": "Stremio addon port of the 3rabi عربي CloudStream extension (Arabic movies & series).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "smoke": "node scripts/smoke.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["stremio", "addon", "arabic", "cloudstream", "akwam"],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "stremio-addon-sdk": "^1.6.10"
+  }
+}

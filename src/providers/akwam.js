@@ -6,7 +6,11 @@
 // Stremio wire format. Every "id" it deals in is a real site URL.
 const { fetchDoc, absUrl } = require('../fetcher');
 
-const mainUrl = 'https://ak.sv';
+// Use the live domain directly. The old entry domain ak.sv 301-redirects here,
+// but Cloudflare hard-challenges ak.sv from datacenter IPs (403 "Just a
+// moment") while akwam.it serves 200 — so hitting akwam.it is what lets this
+// run on serverless hosts like Vercel.
+const mainUrl = 'https://akwam.it';
 const PER_PAGE = 30; // Akwam lists ~30 cards per page; used to map Stremio `skip`.
 
 const ITEM_SELECTOR = 'div.col-lg-auto.col-md-4.col-6';

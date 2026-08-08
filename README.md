@@ -35,8 +35,11 @@ npm run smoke
 The addon is serverless-ready (`api/index.js` + `vercel.json`). Client devices stream
 video **directly from the source CDN**, so the host only does light HTML scraping.
 
-1. Push this repo to GitHub (see below).
-2. Go to <https://vercel.com/new>, sign in with GitHub, **Import** this repo.
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/git/external?repository-url=https://github.com/ahmedelkassrawy/3rabi-stremio)
+
+1. This repo is already on GitHub: `ahmedelkassrawy/3rabi-stremio`.
+2. Go to <https://vercel.com/new>, sign in with GitHub, **Import** this repo
+   (or click the button above).
 3. Framework preset: **Other**. Leave build/output empty. Click **Deploy**.
 4. Your manifest URL is `https://<your-project>.vercel.app/manifest.json`.
 5. Install that URL in Stremio (Addons → paste → Install).

@@ -143,6 +143,14 @@ function withTimeout(promise, ms, fallback) {
 // rejecting — a single bad provider must never break the aggregate.
 async function streamsFromProvider(provider, { type, imdbBase, name, year, season, episode }) {
   try {
+    // Absolute wall-clock deadline for this provider's whole pipeline,
+    // handed down into getStreams so best-effort work inside it (HLS
+    // "auto" -> real-height labeling) can size itself to whatever's left
+    // instead of adding its own fixed cap on top — a fixed cap doesn't know
+    // how much of PROVIDER_BUDGET_MS the search/match/meta steps above
+    // already burned, and stacking on top of that risks tripping the
+    // withTimeout below and dropping this provider's streams entirely.
+    const providerDeadline = Date.now() + PROVIDER_BUDGET_MS;
     if (type === 'series') {
       const supportsSeries = provider.catalogs.some((c) => c.type === 'series');
       if (!supportsSeries) return [];
@@ -172,7 +180,7 @@ async function streamsFromProvider(provider, { type, imdbBase, name, year, seaso
           (e) => Number(e.season) === season && Number(e.episode) === episode
         );
         if (ep) {
-          const streams = await provider.getStreams({ url: ep.url });
+          const streams = await provider.getStreams({ url: ep.url, deadline: providerDeadline });
           return toStremioStreams(provider, streams);
         }
       }
@@ -184,7 +192,7 @@ async function streamsFromProvider(provider, { type, imdbBase, name, year, seaso
     const m = bestMatch(name, year, results, { kind: 'movie' });
     if (!m) return [];
 
-    const streams = await provider.getStreams({ url: m.url });
+    const streams = await provider.getStreams({ url: m.url, deadline: providerDeadline });
     return toStremioStreams(provider, streams);
   } catch (e) {
     console.error(`[stream ${imdbBase} @ ${provider.id}]`, e.message);

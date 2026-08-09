@@ -11,6 +11,7 @@
 const cheerio = require('cheerio');
 const { fetchDoc, fetchText, absUrl } = require('../fetcher');
 const { ENABLE_BROWSER } = require('../config');
+const { enrichHlsQuality } = require('../hls');
 
 // Entry domains rotate, and Cloudflare 403s some of them from datacenter IPs
 // (e.g. web8.topcinema.cam blocks AWS while topcinemaa.co serves fine). Try the
@@ -204,7 +205,7 @@ async function mapPool(items, limit, fn) {
   await Promise.all(workers);
 }
 
-async function getStreams({ url }) {
+async function getStreams({ url, deadline }) {
   const base = await resolveBase();
   const pageUrl = url.split('#')[0].replace(/\/$/, '');
   const watchUrl = `${pageUrl}/watch/`;
@@ -262,9 +263,12 @@ async function getStreams({ url }) {
   // Soft check stops starting new work; the hard Promise.race below returns
   // whatever's collected even if some resolves are still in flight.
   const MAX_STREAMS = 3;
-  const deadline = Date.now() + 10000;
+  // Named apart from the `deadline` param (addon.js's provider-budget
+  // deadline threaded through for enrichHlsQuality below) — this is a
+  // separate, purely-local cap on how long the resolve pool itself runs.
+  const resolveDeadline = Date.now() + 10000;
   const resolvePool = mapPool([...embeds.entries()], 3, async ([embed, referer]) => {
-    if (streams.length >= MAX_STREAMS || Date.now() > deadline) return;
+    if (streams.length >= MAX_STREAMS || Date.now() > resolveDeadline) return;
     const finalLink = unwrapPlayUrl(embed);
       const host = new URL(finalLink).hostname.replace(/^www\./, '').split('.')[0];
       const origin = new URL(finalLink).origin;
@@ -282,7 +286,7 @@ async function getStreams({ url }) {
         /* host unreachable / unsupported packed format */
       }
 
-      if (!foundAny && ENABLE_BROWSER && streams.length < MAX_STREAMS && Date.now() < deadline) {
+      if (!foundAny && ENABLE_BROWSER && streams.length < MAX_STREAMS && Date.now() < resolveDeadline) {
         try {
           // Late-require: keeps Playwright out of any bundle where
           // ENABLE_BROWSER isn't set (see src/resolver.js's header comment).
@@ -302,6 +306,13 @@ async function getStreams({ url }) {
   // Return by the hard deadline no matter what; in-flight resolves keep running
   // but their late results are simply ignored (the client already has enough).
   await Promise.race([resolvePool, new Promise((res) => setTimeout(res, 11000))]);
+
+  // Streams are resolved now, so label any HLS "auto" entries with their real
+  // max resolution (master playlist RESOLUTION= tags). Fail-open and budget-
+  // aware — derives its cap from `deadline` (how much of addon.js's 16s
+  // per-provider budget is actually left) rather than a fixed guess, so it
+  // can never itself blow that budget and cost us the streams.
+  await enrichHlsQuality(streams, { deadline });
 
   // 3) /download/ page: only a last-resort fallback for direct files — skip it
   // entirely once we already have streams, to stay inside the latency budget.

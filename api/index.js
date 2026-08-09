@@ -17,6 +17,30 @@ module.exports = async (req, res) => {
     return res.end();
   }
 
+  // Ad-hoc fetch probe: /debug/fetch?url=<encoded> — reports what an arbitrary
+  // URL returns from THIS host's IP (used to diagnose per-host IP blocks).
+  if (req.url && req.url.startsWith('/debug/fetch')) {
+    try {
+      const u = new URL(req.url, 'http://x').searchParams.get('url');
+      const r = await fetchText(u, { timeout: 12000 });
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(
+        JSON.stringify({
+          url: u,
+          status: r.status,
+          finalUrl: r.url,
+          length: r.text.length,
+          hasPacker: /eval\(function\(p,a,c,k,e,d\)/.test(r.text),
+          challenge: /just a moment|cf_chl|Attention Required/i.test(r.text),
+          snippet: r.text.slice(0, 200),
+        })
+      );
+    } catch (e) {
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(JSON.stringify({ error: e.message, cause: e.cause?.message }));
+    }
+  }
+
   // Diagnostic route: what does the source site return to THIS host's IP?
   if (req.url && req.url.startsWith('/debug')) {
     const candidates = [

@@ -7,9 +7,9 @@ test('normalizeTitle strips decorators, year, and release tags', () => {
   assert.equal(normalizeTitle('فيلم Oppenheimer 2023 مترجم اون لاين'), 'oppenheimer');
   assert.equal(normalizeTitle('مشاهدة فيلم Oppenheimer 2023 مترجم'), 'oppenheimer');
   assert.equal(normalizeTitle('Oppenheimer 1080p BluRay x264'), 'oppenheimer');
-  // 'الاول' (season ordinal) isn't one of the decorator words to strip — only
-  // 'الموسم' itself and 'كامل' are — so it's expected to remain as a token.
-  assert.equal(normalizeTitle('مسلسل Breaking Bad الموسم الاول كامل'), 'breaking bad الاول');
+  // 'الموسم <ordinal>' is stripped as a whole season phrase, so the base
+  // series title is what remains.
+  assert.equal(normalizeTitle('مسلسل Breaking Bad الموسم الاول كامل'), 'breaking bad');
 });
 
 test('extractYear finds a 19xx/20xx year or returns null', () => {

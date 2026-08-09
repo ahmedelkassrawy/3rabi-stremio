@@ -11,8 +11,9 @@
 // word containing 'كامل' as a prefix) from getting chopped into a stray
 // fragment.
 const DECORATOR_WORDS = new Set([
-  'مشاهدة', 'فيلم', 'مسلسل', 'انمي', 'أنمي', 'مترجم', 'مدبلج',
-  'اونلاين', 'كامل', 'الحلقة', 'حلقة', 'الموسم', 'برنامج', 'اون', 'نسخة',
+  'مشاهدة', 'فيلم', 'مسلسل', 'انمي', 'أنمي', 'مترجم', 'مترجمة', 'مترجمه',
+  'مدبلج', 'مدبلجة', 'مدبلجه', 'اونلاين', 'كامل', 'الحلقة', 'حلقة', 'الموسم',
+  'برنامج', 'اون', 'نسخة', 'والاخيرة', 'الاخيرة',
 ]);
 
 // Multi-word decorator phrases (space-separated in the source), stripped by
@@ -45,7 +46,18 @@ function stripPhrase(tokens, phrase) {
 
 function normalizeTitle(s) {
   if (!s) return '';
-  const lower = s.toLowerCase().replace(/[ً-ْ]/g, ''); // strip Arabic diacritics (tashkeel)
+  let lower = s.toLowerCase().replace(/[ً-ْ]/g, ''); // strip Arabic diacritics (tashkeel)
+
+  // Strip Arabic season/episode phrases as a unit: "الموسم <ordinal>" and
+  // "الحلقة <number|word>" (and bare "حلقة <n>"). Provider series results are
+  // per-season/per-episode cards ("House of the Dragon الموسم الثالث الحلقة 7"),
+  // and leaving the ordinal/number tokens in would make the candidate title far
+  // longer than the clean query and sink the length-ratio score below match —
+  // so the base series title must collapse to exactly the query.
+  lower = lower
+    .replace(/الموسم\s+\S+/g, ' ')
+    .replace(/الحلقة\s+\S+/g, ' ')
+    .replace(/حلقة\s+\S+/g, ' ');
 
   let tokens = lower.split(/\s+/).filter(Boolean);
   for (const phrase of DECORATOR_PHRASES) tokens = stripPhrase(tokens, phrase);

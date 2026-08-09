@@ -10,6 +10,11 @@ const akwam = require('./akwam');
 // down.
 const topcinema = require('./topcinema');
 const faselhd = require('./faselhd');
+const arabseed = require('./arabseed');
+const wecima = require('./wecima');
+const cimaclub = require('./cimaclub');
+const egydead = require('./egydead');
+const shahid4u = require('./shahid4u');
 
 // Registration itself is gated on ENABLE_BROWSER, not just stream
 // resolution: this registry is shared by both deploys — Vercel
@@ -18,7 +23,8 @@ const faselhd = require('./faselhd');
 // unconditionally would show their catalogs on Vercel with zero working
 // streams (bad UX). So Vercel stays a clean Akwam-only deploy, and the
 // browser-enabled deploy is the all-in-one with all three providers.
-const HOST_BASED = process.env.ENABLE_BROWSER === '1' ? [topcinema, faselhd] : [];
+const HOST_BASED =
+  process.env.ENABLE_BROWSER === '1' ? [topcinema, faselhd, arabseed, wecima, cimaclub, egydead, shahid4u] : [];
 
 const providers = [akwam, ...HOST_BASED];
 

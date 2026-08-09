@@ -10,6 +10,7 @@
 // page also yields direct file links.
 const cheerio = require('cheerio');
 const { fetchDoc, fetchText, absUrl } = require('../fetcher');
+const { ENABLE_BROWSER } = require('../config');
 
 const mainUrl = 'https://web8.topcinema.cam';
 const PER_PAGE = 60;
@@ -176,6 +177,19 @@ function unwrapPlayUrl(url) {
   return url;
 }
 
+// Run async `fn` over `items` with at most `limit` in flight — the browser
+// resolver opens a heavy Chromium page per embed, so an unbounded Promise.all
+// over every server could spawn many at once.
+async function mapPool(items, limit, fn) {
+  const queue = [...items];
+  const workers = Array.from({ length: Math.min(limit, queue.length) }, async () => {
+    while (queue.length) {
+      await fn(queue.shift());
+    }
+  });
+  await Promise.all(workers);
+}
+
 async function getStreams({ url }) {
   const base = await resolveBase();
   const pageUrl = url.split('#')[0].replace(/\/$/, '');
@@ -220,24 +234,49 @@ async function getStreams({ url }) {
     /* watch page failed */
   }
 
-  // 2) Resolve each host embed via the generic packed-script unpacker.
-  await Promise.all(
-    [...embeds.entries()].map(async ([embed, referer]) => {
-      const finalLink = unwrapPlayUrl(embed);
+  // 2) Resolve each host embed via the generic packed-script unpacker, and
+  // for embeds that yield nothing that way, fall back to the headless-
+  // browser resolver (some hosts only build their player via JS with no
+  // static packed payload at all). Every stream here is "host-based" —
+  // resolved from an external CDN (vidtube/luluvdo/streamwish/...) that can
+  // Cloudflare-block datacenter IPs — so it's marked `proxy: true` and left
+  // to addon.js to decide direct-vs-proxied per viewer (see addon.js's
+  // ip-bound check: Top Cinema's links are normally hostname-based, so most
+  // viewers get a direct entry with a proxied fallback).
+  await mapPool([...embeds.entries()], 3, async ([embed, referer]) => {
+    const finalLink = unwrapPlayUrl(embed);
+      const host = new URL(finalLink).hostname.replace(/^www\./, '').split('.')[0];
+      const origin = new URL(finalLink).origin;
+      let foundAny = false;
       try {
         const r = await fetchText(finalLink, { headers: { ...baseHeaders, Referer: referer }, timeout: 12000 });
-        const host = new URL(finalLink).hostname.replace(/^www\./, '').split('.')[0];
-        const origin = new URL(finalLink).origin;
         for (const f of extractPacked(r.text)) {
           if (seen.has(f.url)) continue;
           seen.add(f.url);
+          foundAny = true;
           // These CDNs 403 without the embed page as Referer AND its Origin.
-          streams.push({ url: f.url, quality: f.quality, referer: finalLink, origin, host });
+          streams.push({ url: f.url, quality: f.quality, referer: finalLink, origin, host, proxy: true });
         }
       } catch {
-        /* host unreachable / unsupported */
+        /* host unreachable / unsupported packed format */
       }
-    })
+
+      if (!foundAny && ENABLE_BROWSER) {
+        try {
+          // Late-require: keeps Playwright out of any bundle where
+          // ENABLE_BROWSER isn't set (see src/resolver.js's header comment).
+          const { resolveStream } = require('../resolver');
+          const resolved = await resolveStream(finalLink, { referer });
+          for (const r of resolved) {
+            if (seen.has(r.url)) continue;
+            seen.add(r.url);
+            streams.push({ url: r.url, quality: r.quality || 'auto', referer: finalLink, origin, host, proxy: true });
+          }
+        } catch {
+          /* browser resolver unavailable / failed for this embed */
+        }
+      }
+    }
   );
 
   // 3) /download/ page: only keep links that are direct media files (most are
@@ -249,7 +288,7 @@ async function getStreams({ url }) {
       if (href && !seen.has(href) && /\.(mp4|mkv|m3u8)(\?|$)/i.test(href)) {
         seen.add(href);
         const q = d.$(a).find('.quality, .resolution').text().trim() || 'Download';
-        streams.push({ url: href, quality: q, host: 'download' });
+        streams.push({ url: href, quality: q, host: 'download', proxy: true });
       }
     });
   } catch {

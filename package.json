@@ -5,17 +5,27 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "smoke": "node scripts/smoke.js"
+    "test": "node --test",
+    "smoke": "node scripts/smoke.js",
+    "smoke:topcinema": "node scripts/smoke-topcinema.js",
+    "smoke:faselhd": "node scripts/smoke-faselhd.js"
   },
   "engines": {
     "node": ">=18"
   },
-  "keywords": ["stremio", "addon", "arabic", "cloudstream", "akwam"],
+  "keywords": [
+    "stremio",
+    "addon",
+    "arabic",
+    "cloudstream",
+    "akwam"
+  ],
   "author": "",
   "license": "MIT",
   "type": "commonjs",
   "dependencies": {
     "cheerio": "^1.2.0",
+    "playwright": "^1.62.1",
     "stremio-addon-sdk": "^1.6.10"
   }
 }

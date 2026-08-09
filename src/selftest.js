@@ -26,11 +26,13 @@ async function runProvider(provider) {
 }
 
 async function selftest() {
-  const { byId } = require('./providers');
-  const targets = ['topcinema', 'faselhd'].filter((id) => byId[id]);
+  // Test every registered provider end-to-end from the deploy IP, so we can see
+  // which ones actually resolve here (dead domains / datacenter 403s show up as
+  // errors) and curate the registry accordingly.
+  const { providers } = require('./providers');
   const results = {};
-  for (const id of targets) {
-    results[id] = await runProvider(byId[id]);
+  for (const p of providers) {
+    results[p.id] = await runProvider(p);
   }
   return { enableBrowser: ENABLE_BROWSER, results };
 }

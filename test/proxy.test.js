@@ -19,6 +19,7 @@ const HEADERS = { Referer: 'https://host/e/x', 'User-Agent': 'UA' };
 const MANIFEST = [
   '#EXTM3U',
   '#EXT-X-VERSION:6',
+  '#EXT-X-SESSION-KEY:METHOD=AES-128,URI="https://cdn.host/keys/session.bin"',
   '#EXT-X-KEY:METHOD=AES-128,URI="https://cdn.host/keys/key.bin",IV=0x1',
   '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="en",URI="audio/eng.m3u8"',
   '#EXT-X-MAP:URI="init.mp4"',
@@ -50,6 +51,9 @@ test('rewriteManifest proxies every URI, preserves #EXT directives', () => {
   assert.match(mediaLine, /URI="https:\/\/pub\.example\/proxy\?url=/);
   const mapLine = lines.find((l) => l.startsWith('#EXT-X-MAP'));
   assert.match(mapLine, /URI="https:\/\/pub\.example\/proxy\?url=/);
+  const sessionKeyLine = lines.find((l) => l.startsWith('#EXT-X-SESSION-KEY'));
+  assert.match(sessionKeyLine, /URI="https:\/\/pub\.example\/proxy\?url=/);
+  assert.doesNotMatch(sessionKeyLine, /cdn\.host\/keys\/session\.bin"/);
 
   // Bare playlist/segment lines (absolute w/ query, and relative) rewritten.
   const bare = lines.filter((l) => l.startsWith('https://pub.example/proxy?url='));

@@ -95,6 +95,15 @@ async function assertPublicTarget(urlObj) {
 // fetch() with redirect:'manual', validating (DNS + IP range) every hop
 // before following it — auto-follow would skip straight past our checks on
 // the *final* fetch call, letting a malicious redirect chain slip through.
+//
+// Residual risk (accepted): this is a check-then-fetch (TOCTOU) — assertPublicTarget
+// resolves DNS, then fetch() resolves again independently, so a hostile host with a
+// very short TTL could DNS-rebind to a private IP between the two. Fully closing it
+// needs pinning the validated IP into the fetch (custom lookup/agent). Given the
+// threat model (an open media proxy whose targets are already attacker-controlled
+// stream hosts, with no local secrets beyond what the range check blocks), we accept
+// this rather than pin. Decimal/octal IP literals are NOT a bypass: net.isIP rejects
+// them and dns.lookup normalizes them, so the range check still fires.
 async function fetchPublicOnly(targetUrl, options, maxRedirects = 5) {
   let current = new URL(targetUrl);
   for (let i = 0; i <= maxRedirects; i++) {
@@ -152,7 +161,7 @@ function rewriteManifest(text, manifestUrl, publicBase, headersObj) {
       const trimmed = line.trim();
       if (!trimmed) return line;
       if (trimmed.startsWith('#')) {
-        if (/^#EXT-X-(KEY|MEDIA|MAP|I-FRAME-STREAM-INF):/.test(trimmed)) {
+        if (/^#EXT-X-(KEY|MEDIA|MAP|I-FRAME-STREAM-INF|SESSION-KEY):/.test(trimmed)) {
           return proxifyUriAttr(line, manifestUrl, publicBase, headersObj);
         }
         return line;

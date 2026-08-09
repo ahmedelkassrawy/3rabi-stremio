@@ -25,14 +25,13 @@ const shahid4u = require('./shahid4u');
 // browser-enabled deploy is the all-in-one with all three providers.
 // Only providers that actually RESOLVE from the deploy IP are registered, so
 // Stremio never shows empty rows. Verified via /selftest from AWS Frankfurt:
-//   working: topcinema, faselhd, wecima
+//   working: topcinema, faselhd, wecima, egydead (movies-only, via /page/movies/)
 //   ported but disabled (site unreachable/blocked from datacenter IPs):
 //     arabseed  -> asd.pics 403 (Cloudflare; needs browser-based site fetch)
 //     shahid4u  -> shaahed4u.net 403 (Cloudflare)
 //     cimaclub  -> ciimaclub.club dead (000)
-//     egydead   -> site 200 (tv10.egydead.live) but catalog selectors need fixing
 // Re-enable individually once their site fetch works from here.
-const HOST_BASED = process.env.ENABLE_BROWSER === '1' ? [topcinema, faselhd, wecima] : [];
+const HOST_BASED = process.env.ENABLE_BROWSER === '1' ? [topcinema, faselhd, wecima, egydead] : [];
 
 const providers = [akwam, ...HOST_BASED];
 

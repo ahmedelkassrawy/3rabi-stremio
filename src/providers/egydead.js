@@ -54,10 +54,14 @@ async function resolveBase() {
   return cachedBase;
 }
 
+// The live site (tv10.egydead.live) exposes a real paginated MOVIES listing at
+// /page/movies/ (movie detail pages are root slugs, not /film/). There is no
+// equivalent series index — the homepage/seasons only surface latest episodes —
+// so Egydead is movies-only here.
 const CATALOGS = [
-  { type: 'movie', id: 'egydead-movies', name: 'Egydead · أفلام', path: '/movies', search: true },
-  { type: 'series', id: 'egydead-series', name: 'Egydead · مسلسلات', path: '/series', search: true },
+  { type: 'movie', id: 'egydead-movies', name: 'Egydead · أفلام', path: '/page/movies/', search: true },
 ];
+const PER_PAGE = 100;
 
 function isSeriesHref(href) {
   return /\/(season|serie|series|show|assembly)\//.test(href);
@@ -83,21 +87,22 @@ function parseCards($, base) {
   return items;
 }
 
-async function getCatalog({ type, search, skip = 0 }) {
+async function getCatalog({ search, skip = 0 }) {
   try {
     const base = await resolveBase();
+    let url;
     if (search) {
-      const url = `${base}/?s=${encodeURIComponent(search)}`;
-      const { $, finalUrl } = await fetchDoc(url, { headers: { ...baseHeaders, Referer: base + '/' } });
-      return parseCards($, finalUrl).filter((c) => (type === 'movie' ? isMovieHref(c.url) : isSeriesHref(c.url)));
+      url = `${base}/?s=${encodeURIComponent(search)}`;
+    } else {
+      const page = Math.floor(skip / PER_PAGE) + 1;
+      url = page > 1 ? `${base}/page/movies/page/${page}/` : `${base}/page/movies/`;
     }
-    // No dedicated paginated browse-by-type page is scraped in the Kotlin
-    // source (getMainPage only reads homepage sections) — so pagination past
-    // the homepage isn't supported; skip > 0 returns nothing rather than
-    // guessing at an unverified URL shape.
-    if (skip > 0) return [];
-    const { $, finalUrl } = await fetchDoc(base + '/', { headers: { ...baseHeaders, Referer: base + '/' } });
-    return parseCards($, finalUrl).filter((c) => (type === 'movie' ? isMovieHref(c.url) : isSeriesHref(c.url)));
+    const { $, finalUrl } = await fetchDoc(url, { headers: { ...baseHeaders, Referer: base + '/' } });
+    let items = parseCards($, finalUrl);
+    // The /page/movies/ listing is already all movies; only search results are
+    // mixed, so drop episode/season entries there.
+    if (search) items = items.filter((c) => !/\/(episode|season)\//.test(c.url));
+    return items;
   } catch {
     return [];
   }
@@ -170,21 +175,25 @@ async function getMeta({ url }) {
       }
     }
 
-    if (isMovieHref(pageUrl)) {
+    // Movie detail pages are root slugs (no /film/), so detect a real series
+    // ONLY by explicit season/episode containers — otherwise treat as a movie.
+    // The old /film/ URL check never matched, sending movies into the greedy
+    // episode scraper (any <ul>) which mis-tagged them as empty series.
+    let seasonLinks = [
+      ...new Set(
+        $('div.seasons-list li.movieItem a, div.seasons-list a')
+          .map((_, a) => absUrl($(a).attr('href'), finalUrl))
+          .get()
+          .filter(Boolean)
+      ),
+    ].reverse();
+    const hasEpsContainer = $('div.EpsList, div.episodes-list').length > 0;
+
+    if (!seasonLinks.length && !hasEpsContainer) {
       const year = Number($('div.LeftBox li:contains(السنه) a').first().text().trim()) || null;
       const genres = $('div.LeftBox li:contains(النوع) a').map((_, a) => $(a).text().trim()).get();
       return { type: 'movie', name: title, poster, background: poster, description: plot, year, genres };
     }
-
-    // Series/season/episode page: prefer a season-links list (walked like
-    // `discoverSeasonsPreserveOrder`, simplified to one level since the
-    // Kotlin's own recursive walk only ever finds one extra level in
-    // practice); fall back to episodes embedded directly on this page.
-    let seasonLinks = $('div.seasons-list li.movieItem a, div.seasons-list a')
-      .map((_, a) => absUrl($(a).attr('href'), finalUrl))
-      .get()
-      .filter(Boolean);
-    seasonLinks = [...new Set(seasonLinks)].reverse(); // oldest season first, like the Kotlin's `.reverse()`
 
     let episodes = [];
     if (seasonLinks.length) {

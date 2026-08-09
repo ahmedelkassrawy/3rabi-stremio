@@ -23,8 +23,16 @@ const shahid4u = require('./shahid4u');
 // unconditionally would show their catalogs on Vercel with zero working
 // streams (bad UX). So Vercel stays a clean Akwam-only deploy, and the
 // browser-enabled deploy is the all-in-one with all three providers.
-const HOST_BASED =
-  process.env.ENABLE_BROWSER === '1' ? [topcinema, faselhd, arabseed, wecima, cimaclub, egydead, shahid4u] : [];
+// Only providers that actually RESOLVE from the deploy IP are registered, so
+// Stremio never shows empty rows. Verified via /selftest from AWS Frankfurt:
+//   working: topcinema, faselhd, wecima
+//   ported but disabled (site unreachable/blocked from datacenter IPs):
+//     arabseed  -> asd.pics 403 (Cloudflare; needs browser-based site fetch)
+//     shahid4u  -> shaahed4u.net 403 (Cloudflare)
+//     cimaclub  -> ciimaclub.club dead (000)
+//     egydead   -> site 200 (tv10.egydead.live) but catalog selectors need fixing
+// Re-enable individually once their site fetch works from here.
+const HOST_BASED = process.env.ENABLE_BROWSER === '1' ? [topcinema, faselhd, wecima] : [];
 
 const providers = [akwam, ...HOST_BASED];
 

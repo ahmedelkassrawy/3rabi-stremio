@@ -83,9 +83,10 @@ async function resolveStream(pageUrl, { referer } = {}) {
       // sniffer caught something before failing — keep going.
     }
 
-    // Poll for ~15s, nudging play controls each second until a media URL
-    // shows up (the player often waits for a genuine click/gesture).
-    for (let i = 0; i < 15 && found.size === 0; i++) {
+    // Poll for ~10s, nudging play controls each second until a media URL shows
+    // up (the player often waits for a genuine click/gesture). Kept short so a
+    // dead embed doesn't blow the provider's overall latency budget.
+    for (let i = 0; i < 10 && found.size === 0; i++) {
       await page.waitForTimeout(1000);
       await page
         .evaluate(() => {

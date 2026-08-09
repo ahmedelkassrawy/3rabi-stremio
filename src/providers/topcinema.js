@@ -257,7 +257,12 @@ async function getStreams({ url }) {
   // to addon.js to decide direct-vs-proxied per viewer (see addon.js's
   // ip-bound check: Top Cinema's links are normally hostname-based, so most
   // viewers get a direct entry with a proxied fallback).
+  // Latency budget: return a few playable streams fast rather than resolving
+  // all 8-10 host servers (each via slow Chromium), which times the client out.
+  const MAX_STREAMS = 4;
+  const deadline = Date.now() + 14000;
   await mapPool([...embeds.entries()], 3, async ([embed, referer]) => {
+    if (streams.length >= MAX_STREAMS || Date.now() > deadline) return;
     const finalLink = unwrapPlayUrl(embed);
       const host = new URL(finalLink).hostname.replace(/^www\./, '').split('.')[0];
       const origin = new URL(finalLink).origin;
@@ -275,7 +280,7 @@ async function getStreams({ url }) {
         /* host unreachable / unsupported packed format */
       }
 
-      if (!foundAny && ENABLE_BROWSER) {
+      if (!foundAny && ENABLE_BROWSER && streams.length < MAX_STREAMS && Date.now() < deadline) {
         try {
           // Late-require: keeps Playwright out of any bundle where
           // ENABLE_BROWSER isn't set (see src/resolver.js's header comment).

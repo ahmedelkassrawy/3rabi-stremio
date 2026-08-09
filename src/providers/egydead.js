@@ -446,8 +446,15 @@ async function getStreams({ url }) {
 
     const streams = [];
     const seen = new Set();
+    // Latency budget: Stremio/Nuvio abandon a stream request after ~15-30s, so
+    // stop as soon as we have a few playable streams or the deadline passes —
+    // resolving all 15 host servers (each via a slow Chromium fallback) times
+    // the client out entirely ("no stream found").
+    const MAX_STREAMS = 4;
+    const deadline = Date.now() + 14000;
 
     await mapPool([...candidates.entries()], 4, async ([embed, name]) => {
+      if (streams.length >= MAX_STREAMS || Date.now() > deadline) return;
       let foundAny = false;
       let host;
       let origin;
@@ -489,7 +496,9 @@ async function getStreams({ url }) {
         /* host unreachable / unsupported format */
       }
 
-      if (!foundAny && ENABLE_BROWSER) {
+      // Only fall back to the (slow) browser if we still need streams and have
+      // time — otherwise packed/EarnVids results already satisfy the request.
+      if (!foundAny && ENABLE_BROWSER && streams.length < MAX_STREAMS && Date.now() < deadline) {
         try {
           // Late-require: keeps Playwright out of any bundle where
           // ENABLE_BROWSER isn't set (see src/resolver.js's header comment).

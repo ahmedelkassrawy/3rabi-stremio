@@ -2,7 +2,7 @@
 // mapping (toStremioStreams). Run: npm test
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { toStremioStreams, orderCandidatesBySeason } = require('../src/addon');
+const { toStremioStreams, orderCandidatesBySeason, makeStreamCache } = require('../src/addon');
 
 const provider = { id: 'akwam', name: 'Akwam' };
 
@@ -93,4 +93,33 @@ test('orderCandidatesBySeason: an unknown-season card (tier 1) sorts ahead of a 
   ];
   const out = orderCandidatesBySeason(cands, 1); // requested season 1 isn't present in either
   assert.equal(out[0].url, 'hub');
+});
+
+test('makeStreamCache: set then get within TTL returns the same array', () => {
+  const c = makeStreamCache({ ttlMs: 1000, max: 10 });
+  c.set('k', [{ x: 1 }], 0);
+  assert.deepEqual(c.get('k', 500), [{ x: 1 }]);
+});
+
+test('makeStreamCache: expired entry returns null and is evicted', () => {
+  const c = makeStreamCache({ ttlMs: 1000, max: 10 });
+  c.set('k', [{ x: 1 }], 0);
+  assert.equal(c.get('k', 2000), null);
+  assert.equal(c.size, 0);
+});
+
+test('makeStreamCache: empty streams are never stored', () => {
+  const c = makeStreamCache({ ttlMs: 1000, max: 10 });
+  c.set('e', [], 0);
+  assert.equal(c.get('e', 0), null);
+  assert.equal(c.size, 0);
+});
+
+test('makeStreamCache: max eviction removes the first-inserted key', () => {
+  const c = makeStreamCache({ ttlMs: 1000, max: 2 });
+  c.set('a', [{ x: 1 }], 0);
+  c.set('b', [{ x: 2 }], 10);
+  c.set('c', [{ x: 3 }], 20);
+  assert.ok(c.size <= 2);
+  assert.equal(c.get('a', 30), null);
 });

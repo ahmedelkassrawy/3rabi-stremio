@@ -1,0 +1,59 @@
+// Unit tests for the pure, network-free title-matching logic. Run: npm test
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { normalizeTitle, titleScore, extractYear, bestMatch } = require('../src/match');
+
+test('normalizeTitle strips decorators, year, and release tags', () => {
+  assert.equal(normalizeTitle('فيلم Oppenheimer 2023 مترجم اون لاين'), 'oppenheimer');
+  assert.equal(normalizeTitle('مشاهدة فيلم Oppenheimer 2023 مترجم'), 'oppenheimer');
+  assert.equal(normalizeTitle('Oppenheimer 1080p BluRay x264'), 'oppenheimer');
+  // 'الاول' (season ordinal) isn't one of the decorator words to strip — only
+  // 'الموسم' itself and 'كامل' are — so it's expected to remain as a token.
+  assert.equal(normalizeTitle('مسلسل Breaking Bad الموسم الاول كامل'), 'breaking bad الاول');
+});
+
+test('extractYear finds a 19xx/20xx year or returns null', () => {
+  assert.equal(extractYear('فيلم Oppenheimer 2023 مترجم'), 2023);
+  assert.equal(extractYear('no year here'), null);
+});
+
+test('titleScore rates identical normalized titles as a perfect match', () => {
+  assert.equal(titleScore('Oppenheimer', 'فيلم Oppenheimer 2023 مترجم اون لاين'), 1);
+});
+
+test('bestMatch picks the correct candidate by title+year and rejects unrelated ones', () => {
+  const candidates = [
+    { url: 'https://site/1', name: 'The Batman 2022 مترجم' },
+    { url: 'https://site/2', name: 'فيلم Oppenheimer 2023 مترجم اون لاين' },
+    { url: 'https://site/3', name: 'Barbie 2023 مترجم' },
+  ];
+  const m = bestMatch('Oppenheimer', 2023, candidates, { kind: 'movie' });
+  assert.equal(m?.url, 'https://site/2');
+});
+
+test('bestMatch returns null when nothing scores high enough', () => {
+  const candidates = [{ url: 'https://site/1', name: 'Completely Unrelated Show' }];
+  const m = bestMatch('Oppenheimer', 2023, candidates, { kind: 'movie' });
+  assert.equal(m, null);
+});
+
+test('bestMatch rejects year mismatches beyond +/-1', () => {
+  const candidates = [{ url: 'https://site/1', name: 'فيلم Oppenheimer 2019 مترجم' }];
+  const m = bestMatch('Oppenheimer', 2023, candidates, { kind: 'movie' });
+  assert.equal(m, null);
+});
+
+test('bestMatch (movie kind) penalizes an obvious episode title enough to reject it', () => {
+  const candidates = [
+    { url: 'https://site/1', name: 'مسلسل Oppenheimer الحلقة 5' },
+    { url: 'https://site/2', name: 'Something Else Entirely' },
+  ];
+  const m = bestMatch('Oppenheimer', null, candidates, { kind: 'movie' });
+  assert.equal(m, null);
+});
+
+test('bestMatch (series kind) still accepts an episode-shaped title', () => {
+  const candidates = [{ url: 'https://site/1', name: 'مسلسل Oppenheimer الحلقة 5' }];
+  const m = bestMatch('Oppenheimer', null, candidates, { kind: 'series' });
+  assert.equal(m?.url, 'https://site/1');
+});

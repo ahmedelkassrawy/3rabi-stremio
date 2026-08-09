@@ -12,7 +12,11 @@ const cheerio = require('cheerio');
 const { fetchDoc, fetchText, absUrl } = require('../fetcher');
 const { ENABLE_BROWSER } = require('../config');
 
-const mainUrl = 'https://web8.topcinema.cam';
+// Entry domains rotate, and Cloudflare 403s some of them from datacenter IPs
+// (e.g. web8.topcinema.cam blocks AWS while topcinemaa.co serves fine). Try the
+// known live domains in order and cache the first that actually returns cards.
+const mainUrl = 'https://topcinemaa.co';
+const MAIN_CANDIDATES = ['https://topcinemaa.co', 'https://web8.topcinema.cam'];
 const PER_PAGE = 60;
 const UA =
   'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36';
@@ -22,8 +26,18 @@ const baseHeaders = { 'User-Agent': UA, 'Accept-Language': 'ar-EG,ar;q=0.9,en-US
 let cachedBase = null;
 async function resolveBase() {
   if (cachedBase) return cachedBase;
-  const { finalUrl } = await fetchDoc(mainUrl + '/', { headers: { ...baseHeaders, Referer: mainUrl + '/' } });
-  cachedBase = new URL(finalUrl).origin;
+  for (const cand of MAIN_CANDIDATES) {
+    try {
+      const { $, finalUrl } = await fetchDoc(cand + '/', { headers: { ...baseHeaders, Referer: cand + '/' } });
+      if ($('.Small--Box').length || $('.Posts--List').length) {
+        cachedBase = new URL(finalUrl).origin;
+        return cachedBase;
+      }
+    } catch {
+      /* domain blocked/down — try next */
+    }
+  }
+  cachedBase = new URL(mainUrl).origin;
   return cachedBase;
 }
 

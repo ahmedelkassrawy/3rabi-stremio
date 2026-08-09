@@ -1,7 +1,7 @@
 // Unit tests for the pure, network-free title-matching logic. Run: npm test
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeTitle, titleScore, extractYear, bestMatch } = require('../src/match');
+const { normalizeTitle, titleScore, extractYear, bestMatch, seasonFromTitle, bestMatchesRanked } = require('../src/match');
 
 test('normalizeTitle strips decorators, year, and release tags', () => {
   assert.equal(normalizeTitle('فيلم Oppenheimer 2023 مترجم اون لاين'), 'oppenheimer');
@@ -99,3 +99,43 @@ test('bestMatch rejects the three verified containment false positives, still ma
   );
   assert.equal(m?.url, 'https://site/2');
 });
+
+test('seasonFromTitle reads Arabic ordinal and numeric season markers', () => {
+  assert.equal(seasonFromTitle('مسلسل Breaking Bad الموسم الاول'), 1);
+  assert.equal(seasonFromTitle('House of the Dragon الموسم الثالث'), 3);
+  // Compound-before-simple trap: "الثاني عشر" (12) must not be read as its
+  // simple prefix "الثاني" (2).
+  assert.equal(seasonFromTitle('X الموسم الثاني عشر'), 12);
+  assert.equal(seasonFromTitle('Show موسم 4'), 4);
+  assert.equal(seasonFromTitle('The Last of Us'), null);
+  // A stray number that isn't adjacent to a season keyword must be ignored,
+  // not misread as a season.
+  assert.equal(seasonFromTitle('Yellowstone 1883'), null);
+});
+
+test('bestMatchesRanked returns same-show season cards best-first, excludes unrelated titles', () => {
+  const candidates = [
+    { url: 'https://site/1', name: 'Breaking Bad الموسم الاول' },
+    { url: 'https://site/2', name: 'Breaking Bad الموسم الخامس' },
+    { url: 'https://site/3', name: 'Some Other Show 2020' },
+  ];
+  const ranked = bestMatchesRanked('Breaking Bad', null, candidates, { kind: 'series' });
+  assert.ok(ranked.length >= 2);
+  assert.ok(ranked.every((cand) => cand.name.includes('Breaking Bad')));
+  assert.ok(!ranked.some((cand) => cand.name.includes('Some Other Show')));
+  for (const cand of ranked) {
+    assert.ok(scoreOf(cand, candidates) >= 0.6);
+  }
+  // Regression guard: bestMatch must still be "ranked[0]" after the refactor
+  // that introduced bestMatchesRanked as the shared implementation.
+  const single = bestMatch('Breaking Bad', null, candidates, { kind: 'series' });
+  assert.equal(single, ranked[0]);
+});
+
+// Helper for the ranked test above — recomputes titleScore the same way
+// scoreCandidate would, just to assert the >= 0.6 threshold held for every
+// item bestMatchesRanked returned (titleScore is exported; scoreCandidate,
+// which also folds in the year/episode penalties, is not).
+function scoreOf(cand) {
+  return titleScore('Breaking Bad', cand.name);
+}

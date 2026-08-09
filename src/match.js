@@ -29,6 +29,35 @@ const RELEASE_TAG_SET = new Set([
 
 const EPISODE_HINT_RE = /(?:حلقة|الحلقة)|s\d{1,2}e\d{1,3}|الموسم/i;
 
+// Arabic ordinal season words -> number. Providers title their per-season
+// cards "<show> الموسم <ordinal>" (Akwam) or "… موسم <n>" (Faselhd), so a
+// requested IMDb season can be located among candidates by parsing this.
+// Compound ordinals ("الثاني عشر" = 12) MUST be tested before their simple
+// prefix ("الثاني" = 2) or a 12th-season title would read as season 2 — the
+// lookup below sorts keys longest-first to guarantee that.
+const AR_SEASON_WORDS = {
+  الاول: 1, الأول: 1, الثاني: 2, الثالث: 3, الرابع: 4, الخامس: 5,
+  السادس: 6, السابع: 7, الثامن: 8, التاسع: 9, العاشر: 10,
+  'الحادي عشر': 11, 'الثاني عشر': 12, 'الثالث عشر': 13, 'الرابع عشر': 14,
+  'الخامس عشر': 15, 'السادس عشر': 16, 'السابع عشر': 17, 'الثامن عشر': 18,
+  'التاسع عشر': 19, العشرون: 20,
+};
+const AR_SEASON_ENTRIES = Object.entries(AR_SEASON_WORDS).sort((a, b) => b[0].length - a[0].length);
+
+// Best-effort season number for a provider listing/title. Returns null when no
+// season marker is present (a bare show title, or an "all seasons" hub) so the
+// caller can treat "unknown" differently from a concrete mismatch.
+function seasonFromTitle(name) {
+  if (!name) return null;
+  const lower = name.toLowerCase().replace(/[ً-ْ]/g, '');
+  for (const [word, num] of AR_SEASON_ENTRIES) {
+    if (lower.includes(word)) return num;
+  }
+  // Numeric forms: "موسم 3", "season 3", "s3".
+  const m = lower.match(/(?:(?:الموسم|موسم)\s*|\b(?:season|s)\s*[-:]?\s*)(\d{1,2})\b/);
+  return m ? Number(m[1]) : null;
+}
+
 // Removes every consecutive run of tokens matching `phrase`, in place of a
 // substring split (a raw string split would also nuke the phrase's letters
 // out of an unrelated word that happens to contain them).
@@ -131,36 +160,51 @@ function looksLikeEpisode(name) {
   return EPISODE_HINT_RE.test(name || '');
 }
 
-// candidates: [{ url, name, ... }]. Returns the best candidate or null.
-function bestMatch(query, year, candidates, { kind } = {}) {
-  let best = null;
-  let bestScore = 0;
+// Score a single candidate against the query, applying the year and
+// movie-episode penalties. Returns a number (<= 0 means "no match at all").
+function scoreCandidate(query, year, cand, kind) {
+  if (!cand?.name) return 0;
+  let score = titleScore(query, cand.name);
+  if (score <= 0) return 0;
 
-  for (const cand of candidates) {
-    if (!cand?.name) continue;
-    let score = titleScore(query, cand.name);
-    if (score <= 0) continue;
-
-    const candYear = extractYear(cand.name);
-    if (year != null) {
-      if (candYear != null) {
-        if (Math.abs(candYear - year) > 1) continue; // year mismatch -> reject
-      } else {
-        score *= 0.9; // no year on the candidate -> slight penalty, not a reject
-      }
-    }
-
-    if (kind === 'movie' && looksLikeEpisode(cand.name)) {
-      score *= 0.5; // probably an episode card leaking into a movie search
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      best = cand;
+  const candYear = extractYear(cand.name);
+  if (year != null) {
+    if (candYear != null) {
+      if (Math.abs(candYear - year) > 1) return 0; // year mismatch -> reject
+    } else {
+      score *= 0.9; // no year on the candidate -> slight penalty, not a reject
     }
   }
 
-  return bestScore >= 0.6 ? best : null;
+  if (kind === 'movie' && looksLikeEpisode(cand.name)) {
+    score *= 0.5; // probably an episode card leaking into a movie search
+  }
+  return score;
 }
 
-module.exports = { normalizeTitle, titleScore, extractYear, bestMatch };
+// candidates: [{ url, name, ... }]. Returns every candidate scoring at/above
+// the 0.6 threshold, best-first. Used by the series pipeline, where each
+// search hit can be a *single season* of the show (Akwam lists
+// "X الموسم الأول/الثاني/…" as separate cards) and the requested season may
+// not be the top-scored one — the caller re-orders these by season.
+function bestMatchesRanked(query, year, candidates, { kind } = {}) {
+  return candidates
+    .map((cand) => ({ cand, score: scoreCandidate(query, year, cand, kind) }))
+    .filter((r) => r.score >= 0.6)
+    .sort((a, b) => b.score - a.score)
+    .map((r) => r.cand);
+}
+
+// Returns the single best candidate or null.
+function bestMatch(query, year, candidates, opts = {}) {
+  return bestMatchesRanked(query, year, candidates, opts)[0] || null;
+}
+
+module.exports = {
+  normalizeTitle,
+  titleScore,
+  extractYear,
+  seasonFromTitle,
+  bestMatch,
+  bestMatchesRanked,
+};

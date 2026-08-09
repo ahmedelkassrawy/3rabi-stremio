@@ -2,7 +2,7 @@
 // mapping (toStremioStreams). Run: npm test
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { toStremioStreams } = require('../src/addon');
+const { toStremioStreams, orderCandidatesBySeason } = require('../src/addon');
 
 const provider = { id: 'akwam', name: 'Akwam' };
 
@@ -74,4 +74,23 @@ test('toStremioStreams: multiple streams from one provider all get that provider
   const out = toStremioStreams(provider, streams);
   assert.equal(out.length, 2);
   for (const s of out) assert.equal(s.behaviorHints.bingeGroup, `3rabi-${provider.id}`);
+});
+
+test('orderCandidatesBySeason: the exact-season card (tier 0) sorts first regardless of incoming order', () => {
+  const cands = [
+    { name: 'X الموسم الثالث', url: 's3' },
+    { name: 'X الموسم الاول', url: 's1' },
+    { name: 'X الموسم الثاني', url: 's2' },
+  ];
+  const out = orderCandidatesBySeason(cands, 1);
+  assert.equal(out[0].url, 's1');
+});
+
+test('orderCandidatesBySeason: an unknown-season card (tier 1) sorts ahead of a concretely-different-season card (tier 2)', () => {
+  const cands = [
+    { name: 'X الموسم الثاني', url: 's2' }, // tier 2: concretely season 2, not what we want
+    { name: 'X', url: 'hub' }, // tier 1: no season marker, unknown
+  ];
+  const out = orderCandidatesBySeason(cands, 1); // requested season 1 isn't present in either
+  assert.equal(out[0].url, 'hub');
 });

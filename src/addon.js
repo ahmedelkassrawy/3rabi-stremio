@@ -7,7 +7,7 @@
 const { addonBuilder } = require('stremio-addon-sdk');
 const { providers } = require('./providers');
 const { getTitle } = require('./cinemeta');
-const { bestMatch } = require('./match');
+const { bestMatch, bestMatchesRanked, seasonFromTitle, normalizeTitle } = require('./match');
 const { proxifyUrl, containsIPv4 } = require('./proxy');
 const { PUBLIC_URL, DESKTOP_UA } = require('./config');
 
@@ -38,6 +38,29 @@ const builder = new addonBuilder(manifest);
 // aggregate — see the comment on the handler's Promise.all race.
 const PROVIDER_BUDGET_MS = 16000;
 const OVERALL_DEADLINE_MS = 20000;
+
+// How many title-matching candidates to open (getMeta) while hunting for a
+// requested episode. Ordering (below) puts the candidate whose own title
+// encodes the requested season first, so the first attempt normally hits; the
+// rest are a bounded fallback so a slow site can't fan out into many fetches.
+const SERIES_META_ATTEMPTS = 4;
+
+// Re-order title-matched series candidates so the one advertising the
+// requested season is tried first: on sites where each search hit is a single
+// season (Akwam), the top-scored card is often the *latest* season, not the
+// one we need. Tier 0 = exact season, tier 1 = unknown season (an "all
+// seasons" hub or an untagged single-season page — still worth opening),
+// tier 2 = a concretely different season. Sort is stable, so within a tier the
+// incoming best-first score order is preserved.
+function orderCandidatesBySeason(cands, season) {
+  const tier = (c) => {
+    const s = seasonFromTitle(c.name);
+    if (s === season) return 0;
+    if (s == null) return 1;
+    return 2;
+  };
+  return [...cands].sort((a, b) => tier(a) - tier(b));
+}
 
 function qualityLabel(q) {
   if (!q || q === 'direct') return 'Direct';
@@ -125,19 +148,35 @@ async function streamsFromProvider(provider, { type, imdbBase, name, year, seaso
       if (!supportsSeries) return [];
 
       const results = await provider.getCatalog({ search: name, type: 'series' });
-      // Pass the Cinemeta year through here too: bestMatch's year guard only
-      // *rejects* a candidate whose own detected year is >1 off (a
-      // candidate with no detectable year just takes a small penalty), so
-      // it's a free disambiguation signal against same-titled shows.
-      const m = bestMatch(name, year, results, { kind: 'series' });
-      if (!m) return [];
+      // Rank ALL title matches (not just the single best). The Cinemeta year
+      // is passed through as a free disambiguation signal: the year guard only
+      // *rejects* a candidate whose own detected year is >1 off; a candidate
+      // with no detectable year just takes a small penalty. Then re-order by
+      // requested season, because on per-season-card sites (Akwam) the needed
+      // season is usually not the top-scored candidate.
+      const ranked = bestMatchesRanked(name, year, results, { kind: 'series' });
+      if (!ranked.length) return [];
 
-      const meta = await provider.getMeta({ url: m.url });
-      const ep = meta?.episodes?.find((e) => Number(e.season) === season && Number(e.episode) === episode);
-      if (!ep) return [];
+      // Only span candidates that are the SAME show as the best match. On
+      // per-season-card sites every season of one show normalizes to the same
+      // base title (season decorators are stripped), so this keeps multi-season
+      // handling while preventing the loop from wandering into a different,
+      // similarly-titled show and returning its streams for a coincidental S:E.
+      const baseTitle = normalizeTitle(ranked[0].name);
+      const sameShow = ranked.filter((c) => normalizeTitle(c.name) === baseTitle);
 
-      const streams = await provider.getStreams({ url: ep.url });
-      return toStremioStreams(provider, streams);
+      const ordered = orderCandidatesBySeason(sameShow, season).slice(0, SERIES_META_ATTEMPTS);
+      for (const cand of ordered) {
+        const meta = await provider.getMeta({ url: cand.url });
+        const ep = meta?.episodes?.find(
+          (e) => Number(e.season) === season && Number(e.episode) === episode
+        );
+        if (ep) {
+          const streams = await provider.getStreams({ url: ep.url });
+          return toStremioStreams(provider, streams);
+        }
+      }
+      return [];
     }
 
     // movie
@@ -193,3 +232,7 @@ module.exports = builder.getInterface();
 // headers/URLs a client is handed), so it gets its own network-free unit
 // tests rather than only being exercised indirectly via the stream handler.
 module.exports.toStremioStreams = toStremioStreams;
+// Exposed for test/addon.test.js: the season-ordering tiering (exact/unknown/
+// mismatch) is worth its own network-free unit tests independent of the
+// stream handler that uses it.
+module.exports.orderCandidatesBySeason = orderCandidatesBySeason;

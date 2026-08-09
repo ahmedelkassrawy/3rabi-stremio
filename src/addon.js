@@ -113,13 +113,19 @@ builder.defineStreamHandler(async ({ type, id }) => {
     return {
       streams: streams.map((s) => ({
         url: s.url,
-        name: provider.name,
+        name: s.host ? `${provider.name}\n${s.host}` : provider.name,
         description: qualityLabel(s.quality),
         // http CDN links + direct file: use Stremio's native player, not the web one.
         behaviorHints: {
           notWebReady: s.url.startsWith('http:'),
           bingeGroup: `3rabi-${provider.id}`,
-          ...(s.referer ? { proxyHeaders: { request: { Referer: s.referer } } } : {}),
+          ...(s.referer
+            ? {
+                proxyHeaders: {
+                  request: { Referer: s.referer, ...(s.origin ? { Origin: s.origin } : {}) },
+                },
+              }
+            : {}),
         },
       })),
     };

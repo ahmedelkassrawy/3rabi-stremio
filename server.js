@@ -63,4 +63,11 @@ server.listen(port, () => {
   console.log(`3rabi addon running: http://127.0.0.1:${port}/manifest.json`);
   console.log(`PUBLIC_URL: ${PUBLIC_URL}`);
   console.log(`ENABLE_BROWSER: ${process.env.ENABLE_BROWSER}`);
+  if (process.env.ENABLE_BROWSER === '1' && !process.env.PUBLIC_URL) {
+    console.warn(
+      '\n⚠️  PUBLIC_URL is not set — proxied/IP-bound streams (all Faselhd) will point at ' +
+        "127.0.0.1 and be UNPLAYABLE by remote viewers. Set PUBLIC_URL to this server's public " +
+        'https URL (e.g. https://<user>-<space>.hf.space) before sharing.\n'
+    );
+  }
 });

@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "test": "node --test",
     "smoke": "node scripts/smoke.js",
     "smoke:topcinema": "node scripts/smoke-topcinema.js",
     "smoke:faselhd": "node scripts/smoke-faselhd.js"

@@ -177,6 +177,19 @@ function unwrapPlayUrl(url) {
   return url;
 }
 
+// Run async `fn` over `items` with at most `limit` in flight — the browser
+// resolver opens a heavy Chromium page per embed, so an unbounded Promise.all
+// over every server could spawn many at once.
+async function mapPool(items, limit, fn) {
+  const queue = [...items];
+  const workers = Array.from({ length: Math.min(limit, queue.length) }, async () => {
+    while (queue.length) {
+      await fn(queue.shift());
+    }
+  });
+  await Promise.all(workers);
+}
+
 async function getStreams({ url }) {
   const base = await resolveBase();
   const pageUrl = url.split('#')[0].replace(/\/$/, '');
@@ -230,9 +243,8 @@ async function getStreams({ url }) {
   // to addon.js to decide direct-vs-proxied per viewer (see addon.js's
   // ip-bound check: Top Cinema's links are normally hostname-based, so most
   // viewers get a direct entry with a proxied fallback).
-  await Promise.all(
-    [...embeds.entries()].map(async ([embed, referer]) => {
-      const finalLink = unwrapPlayUrl(embed);
+  await mapPool([...embeds.entries()], 3, async ([embed, referer]) => {
+    const finalLink = unwrapPlayUrl(embed);
       const host = new URL(finalLink).hostname.replace(/^www\./, '').split('.')[0];
       const origin = new URL(finalLink).origin;
       let foundAny = false;
@@ -264,7 +276,7 @@ async function getStreams({ url }) {
           /* browser resolver unavailable / failed for this embed */
         }
       }
-    })
+    }
   );
 
   // 3) /download/ page: only keep links that are direct media files (most are

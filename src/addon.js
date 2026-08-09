@@ -3,7 +3,7 @@
 const { addonBuilder } = require('stremio-addon-sdk');
 const { providers, byId } = require('./providers');
 const { makeId, parseId } = require('./id');
-const { proxifyUrl } = require('./proxy');
+const { proxifyUrl, containsIPv4 } = require('./proxy');
 const { PUBLIC_URL, DESKTOP_UA } = require('./config');
 
 const pkg = require('../package.json');
@@ -181,14 +181,6 @@ builder.defineStreamHandler(async ({ type, id }) => {
 function qualityLabel(q) {
   if (!q || q === 'direct') return 'Direct';
   return /^\d+$/.test(q) ? `${q}p` : q;
-}
-
-// Faselhd's m3u8 (and occasionally other hosts) embeds a literal IPv4 in the
-// URL and is only playable from the IP that resolved it — such a stream must
-// never be offered "direct" to other viewers, only through this server's
-// /proxy. Top Cinema's CDN links are normally hostname-based, not IP-bound.
-function containsIPv4(url) {
-  return /\b\d{1,3}(\.\d{1,3}){3}\b/.test(url);
 }
 
 module.exports = builder.getInterface();

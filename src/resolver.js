@@ -17,10 +17,15 @@ let browserPromise = null;
 // launching a fresh browser per request is far too slow for a stream lookup.
 function getBrowser() {
   if (!browserPromise) {
-    browserPromise = chromium.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-dev-shm-usage'],
-    });
+    // On launch failure, clear the cached promise so the next resolve retries
+    // instead of forever awaiting a rejected promise (which would silently
+    // disable the resolver for the whole process after one transient crash).
+    browserPromise = chromium
+      .launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] })
+      .catch((e) => {
+        browserPromise = null;
+        throw e;
+      });
   }
   return browserPromise;
 }

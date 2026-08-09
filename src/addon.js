@@ -62,6 +62,33 @@ function orderCandidatesBySeason(cands, season) {
   return [...cands].sort((a, b) => tier(a) - tier(b));
 }
 
+// Short-TTL result cache: stream resolution is best-effort and time-boxed, so
+// the resolved set (and its size) varies run-to-run under load. Caching the
+// final streams per title for a few minutes makes repeat requests return an
+// identical, instant result instead of a fresh variable one. TTL is kept well
+// under the hosts' token lifetimes (hours) so cached URLs stay playable.
+function makeStreamCache({ ttlMs, max }) {
+  const m = new Map(); // key -> { at, streams }
+  return {
+    get(key, now = Date.now()) {
+      const e = m.get(key);
+      if (!e) return null;
+      if (now - e.at > ttlMs) { m.delete(key); return null; }
+      return e.streams;
+    },
+    set(key, streams, now = Date.now()) {
+      if (!streams || !streams.length) return; // never cache an empty (all-providers-missed) result
+      if (m.size >= max) {
+        for (const [k, v] of m) if (now - v.at > ttlMs) m.delete(k); // prune expired
+        if (m.size >= max) m.delete(m.keys().next().value); // still full: evict oldest
+      }
+      m.set(key, { at: now, streams });
+    },
+    get size() { return m.size; },
+  };
+}
+const streamCache = makeStreamCache({ ttlMs: Number(process.env.STREAM_CACHE_TTL_MS) || 5 * 60 * 1000, max: 500 });
+
 function qualityLabel(q) {
   if (!q || q === 'direct') return 'Direct';
   return /^\d+$/.test(q) ? `${q}p` : q;
@@ -205,6 +232,13 @@ builder.defineStreamHandler(async ({ type, id }) => {
   const [imdbBase, seasonStr, episodeStr] = id.split(':');
   if (!/^tt\d+$/.test(imdbBase)) return { streams: [] };
 
+  // Cache key is the raw request id (movie base id, or base:S:E for series);
+  // a hit skips Cinemeta + every provider entirely and returns the exact same
+  // streams as the last resolve within the TTL window.
+  const cacheKey = `${type}:${id}`;
+  const cached = streamCache.get(cacheKey);
+  if (cached) return { streams: cached };
+
   const season = seasonStr != null ? Number(seasonStr) : null;
   const episode = episodeStr != null ? Number(episodeStr) : null;
   if (type === 'series' && (!Number.isFinite(season) || !Number.isFinite(episode))) {
@@ -231,6 +265,9 @@ builder.defineStreamHandler(async ({ type, id }) => {
   const settled = (await withTimeout(Promise.all(jobs), OVERALL_DEADLINE_MS, null)) || jobs.map(() => []);
 
   const streams = settled.flat();
+  // Store under the TTL so the next identical request within the window
+  // short-circuits at the cache-check above instead of re-resolving.
+  streamCache.set(cacheKey, streams);
   return { streams };
 });
 
@@ -244,3 +281,6 @@ module.exports.toStremioStreams = toStremioStreams;
 // mismatch) is worth its own network-free unit tests independent of the
 // stream handler that uses it.
 module.exports.orderCandidatesBySeason = orderCandidatesBySeason;
+// Exposed for test/addon.test.js: the TTL/eviction logic is worth its own
+// deterministic unit tests (injectable `now`) independent of the handler.
+module.exports.makeStreamCache = makeStreamCache;

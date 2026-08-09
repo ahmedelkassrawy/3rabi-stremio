@@ -27,6 +27,7 @@
 const cheerio = require('cheerio');
 const { fetchDoc, fetchText, absUrl } = require('../fetcher');
 const { ENABLE_BROWSER } = require('../config');
+const { enrichHlsQuality } = require('../hls');
 
 const mainUrl = 'https://egydead.beer';
 const MAIN_CANDIDATES = ['https://egydead.beer'];
@@ -360,7 +361,7 @@ function isIpBound(u) {
   return /https?:\/\/\d{1,3}(\.\d{1,3}){3}(:|\/)/.test(u);
 }
 
-async function getStreams({ url }) {
+async function getStreams({ url, deadline }) {
   try {
     const originalUrl = url.split('#')[0];
     const watchPageUrl = originalUrl.includes('?view=watch')
@@ -451,10 +452,13 @@ async function getStreams({ url }) {
     // resolving all 15 host servers (each via a slow Chromium fallback) times
     // the client out entirely ("no stream found").
     const MAX_STREAMS = 3;
-    const deadline = Date.now() + 10000;
+    // Named apart from the `deadline` param (addon.js's provider-budget
+    // deadline threaded through for enrichHlsQuality below) — this is a
+    // separate, purely-local cap on how long the resolve pool itself runs.
+    const resolveDeadline = Date.now() + 10000;
 
     const resolvePool = mapPool([...candidates.entries()], 4, async ([embed, name]) => {
-      if (streams.length >= MAX_STREAMS || Date.now() > deadline) return;
+      if (streams.length >= MAX_STREAMS || Date.now() > resolveDeadline) return;
       let foundAny = false;
       let host;
       let origin;
@@ -498,7 +502,7 @@ async function getStreams({ url }) {
 
       // Only fall back to the (slow) browser if we still need streams and have
       // time — otherwise packed/EarnVids results already satisfy the request.
-      if (!foundAny && ENABLE_BROWSER && streams.length < MAX_STREAMS && Date.now() < deadline) {
+      if (!foundAny && ENABLE_BROWSER && streams.length < MAX_STREAMS && Date.now() < resolveDeadline) {
         try {
           // Late-require: keeps Playwright out of any bundle where
           // ENABLE_BROWSER isn't set (see src/resolver.js's header comment).
@@ -511,6 +515,7 @@ async function getStreams({ url }) {
               url: r.url,
               quality: r.quality || 'auto',
               referer: r.referer || embed,
+              origin,
               host,
               proxy: true,
             };
@@ -525,6 +530,13 @@ async function getStreams({ url }) {
     // Hard latency cap: return whatever's collected by the deadline; late
     // in-flight resolves are ignored so the client doesn't time out.
     await Promise.race([resolvePool, new Promise((res) => setTimeout(res, 11000))]);
+
+    // Streams are resolved now, so label any HLS "auto" entries with their
+    // real max resolution (master playlist RESOLUTION= tags). Fail-open and
+    // budget-aware — derives its cap from `deadline` (how much of addon.js's
+    // 16s per-provider budget is actually left) rather than a fixed guess,
+    // so it can never itself blow that budget and cost us the streams.
+    await enrichHlsQuality(streams, { deadline });
 
     return streams;
   } catch {

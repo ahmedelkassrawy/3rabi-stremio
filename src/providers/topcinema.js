@@ -259,9 +259,11 @@ async function getStreams({ url }) {
   // viewers get a direct entry with a proxied fallback).
   // Latency budget: return a few playable streams fast rather than resolving
   // all 8-10 host servers (each via slow Chromium), which times the client out.
-  const MAX_STREAMS = 4;
-  const deadline = Date.now() + 14000;
-  await mapPool([...embeds.entries()], 3, async ([embed, referer]) => {
+  // Soft check stops starting new work; the hard Promise.race below returns
+  // whatever's collected even if some resolves are still in flight.
+  const MAX_STREAMS = 3;
+  const deadline = Date.now() + 10000;
+  const resolvePool = mapPool([...embeds.entries()], 3, async ([embed, referer]) => {
     if (streams.length >= MAX_STREAMS || Date.now() > deadline) return;
     const finalLink = unwrapPlayUrl(embed);
       const host = new URL(finalLink).hostname.replace(/^www\./, '').split('.')[0];
@@ -297,9 +299,13 @@ async function getStreams({ url }) {
       }
     }
   );
+  // Return by the hard deadline no matter what; in-flight resolves keep running
+  // but their late results are simply ignored (the client already has enough).
+  await Promise.race([resolvePool, new Promise((res) => setTimeout(res, 11000))]);
 
-  // 3) /download/ page: only keep links that are direct media files (most are
-  // host landing pages, which aren't playable, so filter to real files).
+  // 3) /download/ page: only a last-resort fallback for direct files — skip it
+  // entirely once we already have streams, to stay inside the latency budget.
+  if (streams.length) return streams;
   try {
     const d = await fetchDoc(downloadUrl, { headers: { ...baseHeaders, Referer: base + '/' } });
     d.$('a.downloadsLink').each((_, a) => {

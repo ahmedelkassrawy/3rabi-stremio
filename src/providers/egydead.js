@@ -450,10 +450,10 @@ async function getStreams({ url }) {
     // stop as soon as we have a few playable streams or the deadline passes —
     // resolving all 15 host servers (each via a slow Chromium fallback) times
     // the client out entirely ("no stream found").
-    const MAX_STREAMS = 4;
-    const deadline = Date.now() + 14000;
+    const MAX_STREAMS = 3;
+    const deadline = Date.now() + 10000;
 
-    await mapPool([...candidates.entries()], 4, async ([embed, name]) => {
+    const resolvePool = mapPool([...candidates.entries()], 4, async ([embed, name]) => {
       if (streams.length >= MAX_STREAMS || Date.now() > deadline) return;
       let foundAny = false;
       let host;
@@ -522,6 +522,9 @@ async function getStreams({ url }) {
         }
       }
     });
+    // Hard latency cap: return whatever's collected by the deadline; late
+    // in-flight resolves are ignored so the client doesn't time out.
+    await Promise.race([resolvePool, new Promise((res) => setTimeout(res, 11000))]);
 
     return streams;
   } catch {

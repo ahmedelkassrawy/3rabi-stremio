@@ -4,3 +4,6 @@ node_modules/
 *.log
 npm-debug.log*
 .DS_Store
+# never commit the EC2 private key or the operator handoff (infra details)
+*.pem
+HANDOFF.md

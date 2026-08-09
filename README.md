@@ -11,9 +11,23 @@ scraped stream — exactly like CloudStream, just in Stremio.
 
 | Provider | Site | Status |
 |----------|------|--------|
-| Akwam | ak.sv → akwam.it | ✅ Movies, series, episodes, search, direct streams |
+| Akwam | ak.sv → akwam.it | ✅ **Deployed on Vercel.** Movies, series, episodes, search, direct streams |
+| Top Cinema | topcinema.cam → topcinemaa.co | ⚠️ Complete & working, but **residential-only** (unregistered by default) |
 
-More providers (Faselhd, Arabseed, anime) can be added — see [Adding a provider](#adding-a-provider).
+### Why some providers are "residential-only"
+
+Akwam serves a **static** video link from an **open CDN**, so it works anywhere —
+including Vercel's datacenter IPs. Host-based providers (Top Cinema, and similarly
+Faselhd/Wecima/anime) resolve their streams through external file hosts
+(vidtube, luluvdo, streamwish, …) that **Cloudflare-block or cloak datacenter
+IPs**. Their catalog/meta scrape fine from Vercel, but stream extraction returns
+403-challenges there. Run the addon on a **residential/home machine** and those
+hosts resolve normally (verified: playable HLS).
+
+`src/providers/topcinema.js` is a complete implementation kept as a reference;
+it is intentionally **not registered** in `src/providers/index.js` because this
+deployment targets Vercel. To enable it on a residential host, add
+`require('./topcinema')` to the providers array.
 
 ## Run locally
 

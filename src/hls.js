@@ -39,6 +39,30 @@ async function mapPool(items, limit, fn) {
   await Promise.all(workers);
 }
 
+// Single-stream enricher: the unit the batch version below is built from, and
+// also called directly by providers that interleave enrichment into their
+// resolve pool (kick this off the moment a stream is discovered rather than
+// waiting for the whole provider race to finish — see topcinema.js/
+// egydead.js). Self-filtering and fail-open, so it's always safe to call on
+// every stream unconditionally: non-"auto"/non-.m3u8 streams are a no-op, and
+// any fetch/parse failure just leaves "auto" in place. Mutates `stream` in
+// place and returns nothing (mirrors enrichHlsQuality's per-item behavior).
+async function enrichStreamQuality(stream, { timeout = 3000 } = {}) {
+  if (!/^auto$/i.test(String(stream.quality || ''))) return;
+  if (!/\.m3u8(\?|$)/i.test(String(stream.url || ''))) return;
+  try {
+    const headers = {
+      ...(stream.referer ? { Referer: stream.referer } : {}),
+      ...(stream.origin ? { Origin: stream.origin } : {}),
+    };
+    const { text } = await fetchText(stream.url, { headers, timeout });
+    const h = parseMaxResolution(text);
+    if (h) stream.quality = String(h);
+  } catch {
+    /* fetch/timeout/403 — leave "auto" as-is, fail open */
+  }
+}
+
 // Best-effort, fail-open: mutate `streams` in place, replacing quality
 // "auto"/"Auto" with the real max height wherever we can fetch and parse the
 // master playlist in time. Must NEVER cost the caller streams — addon.js
@@ -53,6 +77,12 @@ async function mapPool(items, limit, fn) {
 // (403, timeout, malformed body) just leaves the original "auto" label
 // untouched. Back-compat: with no `deadline` (or no options at all), this
 // behaves exactly as before — a flat 3000ms cap.
+//
+// NOTE: providers now prefer interleaving enrichStreamQuality directly into
+// their resolve pool (started the moment each stream is discovered, so it
+// overlaps the provider's own ~11s resolve race instead of running after
+// it) — see topcinema.js/egydead.js. This batch version stays exported and
+// unchanged for back-compat and its existing test coverage.
 async function enrichHlsQuality(streams, { timeout = 3000, concurrency = 3, overallMs, deadline } = {}) {
   const targets = streams.filter(
     (s) => /^auto$/i.test(String(s.quality || '')) && /\.m3u8(\?|$)/i.test(String(s.url || ''))
@@ -68,17 +98,7 @@ async function enrichHlsQuality(streams, { timeout = 3000, concurrency = 3, over
   const perFetch = Math.min(timeout, budget);
 
   const pool = mapPool(targets, concurrency, async (s) => {
-    try {
-      const headers = {
-        ...(s.referer ? { Referer: s.referer } : {}),
-        ...(s.origin ? { Origin: s.origin } : {}),
-      };
-      const { text } = await fetchText(s.url, { headers, timeout: perFetch });
-      const h = parseMaxResolution(text);
-      if (h) s.quality = String(h);
-    } catch {
-      /* fetch/timeout/403 — leave "auto" as-is, fail open */
-    }
+    await enrichStreamQuality(s, { timeout: perFetch });
   });
 
   // Overall cap so a slow/hanging fetch can never blow the provider's own
@@ -89,4 +109,4 @@ async function enrichHlsQuality(streams, { timeout = 3000, concurrency = 3, over
   return streams;
 }
 
-module.exports = { parseMaxResolution, enrichHlsQuality };
+module.exports = { parseMaxResolution, enrichStreamQuality, enrichHlsQuality };

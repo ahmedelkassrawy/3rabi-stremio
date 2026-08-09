@@ -27,7 +27,7 @@
 const cheerio = require('cheerio');
 const { fetchDoc, fetchText, absUrl } = require('../fetcher');
 const { ENABLE_BROWSER } = require('../config');
-const { enrichHlsQuality } = require('../hls');
+const { enrichStreamQuality } = require('../hls');
 
 const mainUrl = 'https://egydead.beer';
 const MAIN_CANDIDATES = ['https://egydead.beer'];
@@ -447,14 +447,19 @@ async function getStreams({ url, deadline }) {
 
     const streams = [];
     const seen = new Set();
+    // Enrichment jobs kicked off the instant each stream is discovered (see
+    // below), so they run concurrently with the rest of the resolve pool
+    // instead of waiting for it — by the time the race below finishes, these
+    // are normally already done too. See hls.js's enrichStreamQuality.
+    const enrichJobs = [];
     // Latency budget: Stremio/Nuvio abandon a stream request after ~15-30s, so
     // stop as soon as we have a few playable streams or the deadline passes —
     // resolving all 15 host servers (each via a slow Chromium fallback) times
     // the client out entirely ("no stream found").
     const MAX_STREAMS = 3;
     // Named apart from the `deadline` param (addon.js's provider-budget
-    // deadline threaded through for enrichHlsQuality below) — this is a
-    // separate, purely-local cap on how long the resolve pool itself runs.
+    // deadline used for the enrichment reap below) — this is a separate,
+    // purely-local cap on how long the resolve pool itself runs.
     const resolveDeadline = Date.now() + 10000;
 
     const resolvePool = mapPool([...candidates.entries()], 4, async ([embed, name]) => {
@@ -484,6 +489,7 @@ async function getStreams({ url, deadline }) {
             const stream = { url: link, quality: 'auto', referer: embed, origin, host, proxy: true };
             if (isIpBound(link)) stream.ipBound = true;
             streams.push(stream);
+            enrichJobs.push(enrichStreamQuality(stream));
           }
         }
 
@@ -495,6 +501,7 @@ async function getStreams({ url, deadline }) {
           const stream = { url: f.url, quality: f.quality, referer: embed, origin, host, proxy: true };
           if (isIpBound(f.url)) stream.ipBound = true;
           streams.push(stream);
+          enrichJobs.push(enrichStreamQuality(stream));
         }
       } catch {
         /* host unreachable / unsupported format */
@@ -521,6 +528,7 @@ async function getStreams({ url, deadline }) {
             };
             if (isIpBound(r.url)) stream.ipBound = true;
             streams.push(stream);
+            enrichJobs.push(enrichStreamQuality(stream));
           }
         } catch {
           /* browser resolver unavailable / failed for this embed */
@@ -531,12 +539,10 @@ async function getStreams({ url, deadline }) {
     // in-flight resolves are ignored so the client doesn't time out.
     await Promise.race([resolvePool, new Promise((res) => setTimeout(res, 11000))]);
 
-    // Streams are resolved now, so label any HLS "auto" entries with their
-    // real max resolution (master playlist RESOLUTION= tags). Fail-open and
-    // budget-aware — derives its cap from `deadline` (how much of addon.js's
-    // 16s per-provider budget is actually left) rather than a fixed guess,
-    // so it can never itself blow that budget and cost us the streams.
-    await enrichHlsQuality(streams, { deadline });
+    // The per-stream enrichment above overlapped the resolve race, so these are
+    // typically already settled; reap them but never past the provider budget.
+    const enrichCap = deadline != null ? Math.max(0, deadline - Date.now() - 800) : 3000;
+    await Promise.race([Promise.all(enrichJobs), new Promise((r) => setTimeout(r, enrichCap))]);
 
     return streams;
   } catch {

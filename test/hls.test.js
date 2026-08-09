@@ -3,7 +3,7 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { parseMaxResolution, enrichHlsQuality } = require('../src/hls');
+const { parseMaxResolution, enrichStreamQuality, enrichHlsQuality } = require('../src/hls');
 
 test('parseMaxResolution returns the highest RESOLUTION height across variants', () => {
   const master = [
@@ -126,6 +126,35 @@ test('enrichHlsQuality fails open on a fetch error and never throws', async () =
   const streams = [{ url: 'http://127.0.0.1:1/master.m3u8', quality: 'auto' }];
   await assert.doesNotReject(enrichHlsQuality(streams));
   assert.equal(streams[0].quality, 'auto');
+});
+
+// enrichStreamQuality is the single-stream unit providers now call directly,
+// interleaved into their resolve pool (see topcinema.js/egydead.js) rather
+// than after the fact — same server/self-filtering/fail-open behavior as
+// enrichHlsQuality above, just one stream at a time and no return value.
+test('enrichStreamQuality relabels "auto" with the real max resolution (string) on a fetchable master playlist', async () => {
+  const stream = { url: `http://127.0.0.1:${port}/master.m3u8`, quality: 'auto' };
+  await enrichStreamQuality(stream);
+  assert.equal(stream.quality, '1080');
+  assert.equal(typeof stream.quality, 'string');
+});
+
+test('enrichStreamQuality leaves a non-"auto" quality untouched', async () => {
+  const stream = { url: `http://127.0.0.1:${port}/master.m3u8`, quality: '720' };
+  await enrichStreamQuality(stream);
+  assert.equal(stream.quality, '720');
+});
+
+test('enrichStreamQuality leaves a non-.m3u8 URL untouched (no fetch attempted)', async () => {
+  const stream = { url: `http://127.0.0.1:${port}/movie.mp4`, quality: 'auto' };
+  await enrichStreamQuality(stream);
+  assert.equal(stream.quality, 'auto');
+});
+
+test('enrichStreamQuality fails open on a connection-refused url and never throws', async () => {
+  const stream = { url: 'http://127.0.0.1:1/master.m3u8', quality: 'auto' };
+  await assert.doesNotReject(enrichStreamQuality(stream));
+  assert.equal(stream.quality, 'auto');
 });
 
 test('enrichHlsQuality skips entirely when too little time remains before the caller deadline', async () => {

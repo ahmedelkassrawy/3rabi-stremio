@@ -11,23 +11,29 @@ scraped stream — exactly like CloudStream, just in Stremio.
 
 | Provider | Site | Status |
 |----------|------|--------|
-| Akwam | ak.sv → akwam.it | ✅ **Deployed on Vercel.** Movies, series, episodes, search, direct streams |
-| Top Cinema | topcinema.cam → topcinemaa.co | ⚠️ Complete & working, but **residential-only** (unregistered by default) |
+| Akwam | ak.sv → akwam.it | ✅ **Deployed on Vercel** (and on the browser-enabled deploy too). Movies, series, episodes, search, direct streams |
+| Top Cinema | topcinema.cam → topcinemaa.co | ✅ Complete; needs `ENABLE_BROWSER=1` deploy to register (see below) |
+| Faselhd | web31312x.faselhdx.bid → rotating live domain | ✅ Complete; catalog/meta work anywhere, streams need `ENABLE_BROWSER=1` |
 
-### Why some providers are "residential-only"
+### Why some providers need a browser-enabled deploy
 
 Akwam serves a **static** video link from an **open CDN**, so it works anywhere —
-including Vercel's datacenter IPs. Host-based providers (Top Cinema, and similarly
-Faselhd/Wecima/anime) resolve their streams through external file hosts
-(vidtube, luluvdo, streamwish, …) that **Cloudflare-block or cloak datacenter
-IPs**. Their catalog/meta scrape fine from Vercel, but stream extraction returns
-403-challenges there. Run the addon on a **residential/home machine** and those
-hosts resolve normally (verified: playable HLS).
+including Vercel's datacenter IPs. Host-based providers (Top Cinema, Faselhd,
+and similarly Wecima/anime as future work) resolve their streams through
+external file hosts (vidtube, luluvdo, streamwish, …) that **Cloudflare-block
+or cloak datacenter IPs**, and Faselhd's player additionally builds its m3u8
+with obfuscated client-side JS — no static URL exists to scrape at all.
 
-`src/providers/topcinema.js` is a complete implementation kept as a reference;
-it is intentionally **not registered** in `src/providers/index.js` because this
-deployment targets Vercel. To enable it on a residential host, add
-`require('./topcinema')` to the providers array.
+`src/resolver.js` solves both with a headless Chromium (Playwright) that
+navigates the page and sniffs the media URL it requests, and `src/proxy.js`
+proxies playback for streams that are IP-bound to whichever host resolved
+them (Faselhd's m3u8 literally embeds the resolver's IP). This is opt-in via
+`ENABLE_BROWSER=1` — see [`docs/DEPLOY-RESOLVER.md`](docs/DEPLOY-RESOLVER.md)
+for the full deploy (primary target: a free Hugging Face Docker Space) and
+the multi-user bandwidth model (most streams still play device→host direct;
+only IP-bound streams use the server's bandwidth). `src/providers/index.js`
+registers Top Cinema/Faselhd only when that flag is set, so the plain Vercel
+deploy stays a clean Akwam-only addon with no broken-stream catalogs.
 
 ## Run locally
 

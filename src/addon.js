@@ -3,6 +3,8 @@
 const { addonBuilder } = require('stremio-addon-sdk');
 const { providers, byId } = require('./providers');
 const { makeId, parseId } = require('./id');
+const { proxifyUrl } = require('./proxy');
+const { PUBLIC_URL, DESKTOP_UA } = require('./config');
 
 const pkg = require('../package.json');
 
@@ -110,8 +112,48 @@ builder.defineStreamHandler(async ({ type, id }) => {
 
   try {
     const streams = await provider.getStreams({ url: parsed.payload });
-    return {
-      streams: streams.map((s) => ({
+    const out = [];
+    for (const s of streams) {
+      if (s.proxy) {
+        // Host-based providers (Top Cinema, Faselhd) resolve streams that
+        // may be Cloudflare-gated against datacenter IPs and/or (Faselhd)
+        // literally IP-bound to whichever machine resolved them. Most of
+        // this addon's *users* are on residential IPs though — only the
+        // server that runs the resolver is on a datacenter/VM IP — so a
+        // stream that isn't IP-bound should still be offered direct
+        // (host -> viewer's device, zero server bandwidth) with a proxied
+        // fallback, and only genuinely IP-bound streams (Faselhd) get
+        // proxy-only, since a direct entry for those would just be broken
+        // on every device but the one that resolved it.
+        const label = s.host ? `${provider.name}\n${s.host}` : provider.name;
+        const headers = {
+          ...(s.referer ? { Referer: s.referer } : {}),
+          ...(s.origin ? { Origin: s.origin } : {}),
+          'User-Agent': DESKTOP_UA,
+        };
+        const boundToIp = s.ipBound || containsIPv4(s.url);
+
+        if (!boundToIp) {
+          out.push({
+            url: s.url,
+            name: label,
+            description: `${qualityLabel(s.quality)} · direct`,
+            behaviorHints: {
+              notWebReady: s.url.startsWith('http:'),
+              bingeGroup: `3rabi-${provider.id}`,
+              proxyHeaders: { request: headers },
+            },
+          });
+        }
+        out.push({
+          url: proxifyUrl(PUBLIC_URL, s.url, headers),
+          name: label,
+          description: `${qualityLabel(s.quality)} · proxy`,
+          behaviorHints: { bingeGroup: `3rabi-${provider.id}` },
+        });
+        continue;
+      }
+      out.push({
         url: s.url,
         name: s.host ? `${provider.name}\n${s.host}` : provider.name,
         description: qualityLabel(s.quality),
@@ -127,8 +169,9 @@ builder.defineStreamHandler(async ({ type, id }) => {
               }
             : {}),
         },
-      })),
-    };
+      });
+    }
+    return { streams: out };
   } catch (e) {
     console.error(`[stream ${id}]`, e.message);
     return { streams: [] };
@@ -138,6 +181,14 @@ builder.defineStreamHandler(async ({ type, id }) => {
 function qualityLabel(q) {
   if (!q || q === 'direct') return 'Direct';
   return /^\d+$/.test(q) ? `${q}p` : q;
+}
+
+// Faselhd's m3u8 (and occasionally other hosts) embeds a literal IPv4 in the
+// URL and is only playable from the IP that resolved it — such a stream must
+// never be offered "direct" to other viewers, only through this server's
+// /proxy. Top Cinema's CDN links are normally hostname-based, not IP-bound.
+function containsIPv4(url) {
+  return /\b\d{1,3}(\.\d{1,3}){3}\b/.test(url);
 }
 
 module.exports = builder.getInterface();

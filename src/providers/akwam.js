@@ -38,7 +38,6 @@ function parseListing($, base) {
 const CATALOGS = [
   { type: 'movie', id: 'akwam-movies', name: 'Akwam · أفلام', path: '/movies', search: true },
   { type: 'series', id: 'akwam-series', name: 'Akwam · مسلسلات', path: '/series', search: true },
-  { type: 'series', id: 'akwam-shows', name: 'Akwam · عروض', path: '/shows', search: false },
 ];
 
 async function getCatalog({ path, search, skip = 0 }) {

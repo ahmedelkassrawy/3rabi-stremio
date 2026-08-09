@@ -10,28 +10,16 @@ const akwam = require('./akwam');
 // down.
 const topcinema = require('./topcinema');
 const faselhd = require('./faselhd');
-const arabseed = require('./arabseed');
-const wecima = require('./wecima');
-const cimaclub = require('./cimaclub');
 const egydead = require('./egydead');
-const shahid4u = require('./shahid4u');
+// wecima.js exists but is intentionally NOT registered (operator preference).
+// arabseed/cimaclub/shahid4u files also exist but stay disabled (site
+// unreachable/Cloudflare-blocked from datacenter IPs).
 
-// Registration itself is gated on ENABLE_BROWSER, not just stream
-// resolution: this registry is shared by both deploys — Vercel
-// (api/index.js, browser disabled) and the Hugging Face Space / any VM
-// (server.js, ENABLE_BROWSER=1). Registering host-based providers
-// unconditionally would show their catalogs on Vercel with zero working
-// streams (bad UX). So Vercel stays a clean Akwam-only deploy, and the
-// browser-enabled deploy is the all-in-one with all three providers.
-// Only providers that actually RESOLVE from the deploy IP are registered, so
-// Stremio never shows empty rows. Verified via /selftest from AWS Frankfurt:
-//   working: topcinema, faselhd, wecima, egydead (movies-only, via /page/movies/)
-//   ported but disabled (site unreachable/blocked from datacenter IPs):
-//     arabseed  -> asd.pics 403 (Cloudflare; needs browser-based site fetch)
-//     shahid4u  -> shaahed4u.net 403 (Cloudflare)
-//     cimaclub  -> ciimaclub.club dead (000)
-// Re-enable individually once their site fetch works from here.
-const HOST_BASED = process.env.ENABLE_BROWSER === '1' ? [topcinema, faselhd, wecima, egydead] : [];
+// Registration is gated on ENABLE_BROWSER: the registry is shared by the
+// Vercel deploy (api/index.js, browser disabled — stays clean Akwam-only) and
+// the browser-enabled VM deploy (server.js). Only providers that actually
+// resolve from the deploy IP are listed, so catalogs are never empty.
+const HOST_BASED = process.env.ENABLE_BROWSER === '1' ? [topcinema, faselhd, egydead] : [];
 
 const providers = [akwam, ...HOST_BASED];
 

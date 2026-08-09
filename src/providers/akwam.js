@@ -5,6 +5,7 @@
 // (catalog items, meta, streams) and lets addon.js translate them into the
 // Stremio wire format. Every "id" it deals in is a real site URL.
 const { fetchDoc, absUrl } = require('../fetcher');
+const { seasonFromTitle } = require('../match');
 
 // Use the live domain directly. The old entry domain ak.sv 301-redirects here,
 // but Cloudflare hard-challenges ak.sv from datacenter IPs (403 "Just a
@@ -52,27 +53,26 @@ async function getCatalog({ path, search, skip = 0 }) {
   return parseListing($, finalUrl);
 }
 
-const AR_SEASON_WORDS = {
-  'الاول': 1, 'الأول': 1, 'الثاني': 2, 'الثالث': 3, 'الرابع': 4, 'الخامس': 5,
-  'السادس': 6, 'السابع': 7, 'الثامن': 8, 'التاسع': 9, 'العاشر': 10,
-  'الحادي عشر': 11, 'الثاني عشر': 12, 'الثالث عشر': 13, 'الرابع عشر': 14,
-  'الخامس عشر': 15, 'السادس عشر': 16, 'السابع عشر': 17, 'الثامن عشر': 18,
-  'التاسع عشر': 19, 'العشرون': 20,
-};
-
+// Delegate to the shared parser (src/match.js) so Akwam and every other
+// provider agree on how Arabic/numeric season markers are read. Unlike the
+// old local numeric fallback — which grabbed the LAST number anywhere in the
+// title and could misfire on things like "Yellowstone 1883" or a bare year —
+// seasonFromTitle only reads digits adjacent to a season keyword. Preserve
+// the 999 sentinel: callers here treat 999 as "couldn't tell, assume season 1".
 function getSeasonNumber(name) {
-  const lower = (name || '').toLowerCase();
-  for (const [k, v] of Object.entries(AR_SEASON_WORDS)) {
-    if (lower.includes(k)) return v;
-  }
-  const nums = (name.match(/\d+/g) || []).map(Number);
-  if (nums.length) return nums[nums.length - 1];
-  return 999;
+  const s = seasonFromTitle(name);
+  return s == null ? 999 : s;
 }
 
+// Akwam episode titles always LEAD with the episode number right after
+// "حلقة" (e.g. "حلقة 7 : مسلسل Breaking Bad الموسم الاول  A No-Rough-Stuff-..."),
+// so the first number in the string is the episode number. Using the last
+// number (the old behavior) broke whenever the English episode title itself
+// contained a number ("2 Guns", "Part 3") or a trailing year — it would
+// return that instead of the real episode number.
 function episodeNumberFrom(name) {
   const nums = name.match(/\d+/g);
-  return nums ? Number(nums[nums.length - 1]) : null;
+  return nums ? Number(nums[0]) : null;
 }
 
 async function getMeta({ url }) {
@@ -195,3 +195,7 @@ async function getStreams({ url }) {
 }
 
 module.exports = { id: 'akwam', name: 'Akwam', catalogs: CATALOGS, getCatalog, getMeta, getStreams };
+// Exposed for test/akwam.test.js: the first-number-wins episode parsing is
+// easy to regress silently (e.g. reverting to "last number"), so it gets its
+// own network-free unit tests, mirroring how addon.js exposes internals.
+module.exports.episodeNumberFrom = episodeNumberFrom;

@@ -13,6 +13,7 @@
 // zero streams — matching the "direct-only" contract of every provider.
 const { fetchDoc, absUrl } = require('../fetcher');
 const { ENABLE_BROWSER } = require('../config');
+const { seasonFromTitle } = require('../match');
 
 const mainUrl = 'https://web31312x.faselhdx.bid';
 const PER_PAGE = 30;
@@ -34,6 +35,20 @@ const CATALOGS = [
   { type: 'movie', id: 'faselhd-movies', name: 'Faselhd · أفلام', path: '/movies', search: true },
   { type: 'series', id: 'faselhd-series', name: 'Faselhd · مسلسلات', path: '/series', search: true },
 ];
+
+// A show's season hub can list many seasons; cap how many we open and how many
+// at once so building meta for one series can't fan out unbounded fetches.
+const MAX_SEASONS = 15;
+const SEASON_FETCH_CONCURRENCY = 4;
+
+// Run async `fn` over `items` with at most `limit` in flight.
+async function mapPool(items, limit, fn) {
+  const queue = [...items];
+  const workers = Array.from({ length: Math.min(limit, queue.length) }, async () => {
+    while (queue.length) await fn(queue.shift());
+  });
+  await Promise.all(workers);
+}
 
 // Cards render as .postDiv / .blockMovie / .Small--Box, all with the same
 // inner shape: `a[href]` for the link, `.h1/.h4/.h5` for the title.
@@ -78,24 +93,74 @@ async function getMeta({ url }) {
     $('.posterImg img.poster').attr('src')?.trim() ||
     null;
 
-  // v1: only the current page's own episode list (`#epAll`), treated as
-  // season 1. Faselhd's cross-season navigation is via `.seasonDiv` onclick
-  // (`window.location.href = '...'`) to a *different page* per season — left
-  // as a follow-up rather than v1 scope.
+  // Parse one page's own episode list (`#epAll`), tagging every entry with the
+  // supplied season number. `#epAll` lists episodes ascending, so reverse to
+  // return them newest-first like the catalog does.
+  function parseEpisodes($doc, seasonNum) {
+    const eps = [];
+    $doc('div#epAll a').each((_, a) => {
+      const epUrl = absUrl($doc(a).attr('href'), finalUrl);
+      if (!epUrl) return;
+      const epTitle = $doc(a).text().trim();
+      if (!epTitle || /باقي الحلقات|المزيد/.test(epTitle)) return;
+      const num = Number((epTitle.match(/\d+/) || [])[0]) || eps.length + 1;
+      eps.push({ url: epUrl, name: epTitle, season: seasonNum, episode: num, poster });
+    });
+    return eps.reverse();
+  }
+
+  // Faselhd season hubs render every season as a `.seasonDiv` whose onclick is
+  // `window.location.href = '/?p=<postId>'` and whose label reads "… موسم N".
+  // The page we loaded is the `.seasonDiv.active` one, so its episodes are
+  // already in this doc's `#epAll` — reuse it and only fetch the *other*
+  // seasons. Before this, every episode was mislabeled season 1 and only the
+  // active season was ever reachable (HANDOFF issue #1). If a div isn't
+  // correctly flagged active it just gets fetched via its own href (one
+  // redundant request), so no episodes are lost.
+  const seasonEls = $('.seasonDiv').toArray();
   const episodes = [];
-  $('div#epAll a').each((_, a) => {
-    const epUrl = absUrl($(a).attr('href'), finalUrl);
-    if (!epUrl) return;
-    const epTitle = $(a).text().trim();
-    if (!epTitle || /باقي الحلقات|المزيد/.test(epTitle)) return;
-    const num = Number((epTitle.match(/\d+/) || [])[0]) || episodes.length + 1;
-    episodes.push({ url: epUrl, name: epTitle, season: 1, episode: num, poster });
-  });
+
+  if (seasonEls.length) {
+    const seasons = seasonEls
+      .map((el, i) => {
+        const $el = $(el);
+        // Use the shared parser (src/match.js) instead of a digits-only regex
+        // so ordinal-word labels ("الموسم الأول") are read correctly, same as
+        // Akwam. The seasonDiv text also contains a view-count number (e.g.
+        // "308٬277 موسم 1"), but seasonFromTitle only reads digits adjacent to
+        // a season keyword, so it isn't fooled by the view count.
+        const num = seasonFromTitle($el.text()) || i + 1;
+        const href = ($el.attr('onclick') || '').match(/href\s*=\s*['"]([^'"]+)['"]/);
+        return {
+          num,
+          href: href ? absUrl(href[1], finalUrl) : null,
+          active: /\bactive\b/.test($el.attr('class') || ''),
+        };
+      })
+      .slice(0, MAX_SEASONS);
+
+    await mapPool(seasons, SEASON_FETCH_CONCURRENCY, async (s) => {
+      if (s.active) {
+        episodes.push(...parseEpisodes($, s.num));
+        return;
+      }
+      if (!s.href) return;
+      try {
+        const sd = await fetchDoc(s.href, { headers: { ...baseHeaders, Referer: finalUrl } });
+        episodes.push(...parseEpisodes(sd.$, s.num));
+      } catch {
+        /* skip a season that failed to load */
+      }
+    });
+  } else {
+    // No season hub (single-season show): treat the current list as season 1.
+    episodes.push(...parseEpisodes($, 1));
+  }
 
   if (!episodes.length) {
     return { type: 'movie', name: title, poster, background: poster, description: plot };
   }
-  return { type: 'series', name: title, poster, background: poster, description: plot, episodes: episodes.reverse() };
+  return { type: 'series', name: title, poster, background: poster, description: plot, episodes };
 }
 
 // Pull the `video_player?player_token=...` URL out of the page's

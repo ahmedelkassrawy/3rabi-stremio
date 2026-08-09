@@ -3,49 +3,64 @@
 // مترجم اون لاين"). Pure and network-free so it's easy to unit test — see
 // test/match.test.js.
 
-// Arabic decorator words the providers glue onto every listing title. Each
-// is stripped as a *whole word* (not a substring) so it never eats into a
-// real title that happens to contain the same letters.
-// Longer/more-specific variants must come before shorter substrings they
-// contain (e.g. 'الحلقة' before 'حلقة', 'اون لاين' before 'اون') so the
-// split-based strip below doesn't leave a stray fragment (bare 'ال') behind.
-const DECORATORS = [
+// Decorator words the providers glue onto every listing title, stripped as
+// EXACT whole tokens (never substrings — Arabic letters aren't in \w, so a
+// regex \b boundary doesn't work here; see normalizeTitle below, which
+// tokenizes on whitespace and compares tokens verbatim). This is what keeps
+// a real word that merely *contains* a decorator's letters (e.g. a title
+// word containing 'كامل' as a prefix) from getting chopped into a stray
+// fragment.
+const DECORATOR_WORDS = new Set([
   'مشاهدة', 'فيلم', 'مسلسل', 'انمي', 'أنمي', 'مترجم', 'مدبلج',
-  'اون لاين', 'اونلاين', 'كامل', 'الحلقة', 'حلقة', 'الموسم', 'برنامج',
-  'اون', 'نسخة',
-];
+  'اونلاين', 'كامل', 'الحلقة', 'حلقة', 'الموسم', 'برنامج', 'اون', 'نسخة',
+]);
 
-// Quality/release tags that show up appended to titles on some sites.
-const RELEASE_TAGS = [
+// Multi-word decorator phrases (space-separated in the source), stripped by
+// matching a consecutive run of tokens rather than a single one.
+const DECORATOR_PHRASES = [['اون', 'لاين']];
+
+// Quality/release tags that show up appended to titles on some sites,
+// stripped the same whole-token way.
+const RELEASE_TAG_SET = new Set([
   '1080p', '720p', '480p', 'web-dl', 'webrip', 'hdts', 'hdcam',
   'bluray', 'brrip', 'x264', 'x265', 'hevc', 'hdtv', 'camrip', 'v2', 'v3',
-];
+]);
 
 const EPISODE_HINT_RE = /(?:حلقة|الحلقة)|s\d{1,2}e\d{1,3}|الموسم/i;
 
+// Removes every consecutive run of tokens matching `phrase`, in place of a
+// substring split (a raw string split would also nuke the phrase's letters
+// out of an unrelated word that happens to contain them).
+function stripPhrase(tokens, phrase) {
+  const out = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (phrase.every((w, j) => tokens[i + j] === w)) {
+      i += phrase.length - 1; // skip the whole matched run
+      continue;
+    }
+    out.push(tokens[i]);
+  }
+  return out;
+}
+
 function normalizeTitle(s) {
   if (!s) return '';
-  let out = ` ${s.toLowerCase()} `;
+  const lower = s.toLowerCase().replace(/[ً-ْ]/g, ''); // strip Arabic diacritics (tashkeel)
 
-  // Strip decorator words as whole words (surrounded by non-word boundaries
-  // — Arabic letters aren't in \w, so match against whitespace instead).
-  for (const word of DECORATORS) {
-    out = out.split(word.toLowerCase()).join(' ');
-  }
-  for (const tag of RELEASE_TAGS) {
-    out = out.split(tag).join(' ');
-  }
+  let tokens = lower.split(/\s+/).filter(Boolean);
+  for (const phrase of DECORATOR_PHRASES) tokens = stripPhrase(tokens, phrase);
+  tokens = tokens.filter((t) => !DECORATOR_WORDS.has(t) && !RELEASE_TAG_SET.has(t));
 
-  // Strip a leading/trailing 4-digit year (a *standalone* one — kept as a
-  // token so a title like "2001 a space odyssey" doesn't lose "2001" from
-  // the middle, only from the ends).
-  out = out.trim().replace(/^(19|20)\d{2}\b/, ' ').replace(/\b(19|20)\d{2}$/, ' ');
+  // Drop a leading/trailing standalone 4-digit year token (release-year
+  // metadata) — kept only at the ends so a title that's genuinely built
+  // around a number isn't eaten from the middle.
+  if (tokens.length && /^(19|20)\d{2}$/.test(tokens[0])) tokens = tokens.slice(1);
+  if (tokens.length && /^(19|20)\d{2}$/.test(tokens[tokens.length - 1])) tokens = tokens.slice(0, -1);
 
-  // Drop punctuation/diacritics, keep latin + digits + arabic letters + spaces.
-  out = out.replace(/[ً-ْ]/g, ''); // Arabic diacritics (tashkeel)
-  out = out.replace(/[^\p{L}\p{N}\s]/gu, ' ');
-
-  return out.replace(/\s+/g, ' ').trim();
+  // Whatever's left may still carry punctuation (e.g. a trailing comma) —
+  // drop it now, keeping latin + digits + arabic letters + spaces.
+  const cleaned = tokens.join(' ').replace(/[^\p{L}\p{N}\s]/gu, ' ');
+  return cleaned.replace(/\s+/g, ' ').trim();
 }
 
 function extractYear(text) {
@@ -54,31 +69,50 @@ function extractYear(text) {
   return m ? Number(m[0]) : null;
 }
 
-function tokenSet(normalized) {
-  return new Set(normalized.split(' ').filter(Boolean));
+function tokenize(normalized) {
+  return normalized.split(' ').filter(Boolean);
 }
 
-// Jaccard similarity of token sets, boosted when one normalized string fully
-// contains the other (handles "oppenheimer" vs "oppenheimer 2023 imax cut"
-// style provider titles where token-set overlap alone would undersell it).
+// Jaccard similarity of token sets, boosted by TOKEN-based containment: every
+// token of the shorter title appears as a whole token in the longer one
+// (handles "oppenheimer" vs "oppenheimer 2023 imax cut" style provider
+// titles where plain overlap alone would undersell it). A raw substring
+// check here is a trap — "the office" is a literal substring of "the office
+// ladies", a different show entirely — so containment is token-set-based,
+// and both the plain score and the containment bonus are scaled down by how
+// much of the longer title's token budget is *unaccounted for*, squared so
+// a couple of stray extra tokens costs more than a linear scale-down would.
 function titleScore(a, b) {
   const na = normalizeTitle(a);
   const nb = normalizeTitle(b);
   if (!na || !nb) return 0;
   if (na === nb) return 1;
 
-  const setA = tokenSet(na);
-  const setB = tokenSet(nb);
+  const tokensA = tokenize(na);
+  const tokensB = tokenize(nb);
+  const setA = new Set(tokensA);
+  const setB = new Set(tokensB);
   let intersection = 0;
   for (const t of setA) if (setB.has(t)) intersection++;
   const union = setA.size + setB.size - intersection;
   const jaccard = union ? intersection / union : 0;
 
-  const containment = na.includes(nb) || nb.includes(na) ? 1 : 0;
+  // A lone short token ("it", "up") must not qualify for containment on its
+  // own — almost anything "contains" a two-letter word — so it needs either
+  // >=2 tokens or one long-enough (>=4 char) token.
+  const shorterIsA = tokensA.length <= tokensB.length;
+  const shorterTokens = shorterIsA ? tokensA : tokensB;
+  const longerSet = shorterIsA ? setB : setA;
+  const meaningfulShort = shorterTokens.length >= 2 || (shorterTokens.length === 1 && shorterTokens[0].length >= 4);
+  const contained = meaningfulShort && shorterTokens.every((t) => longerSet.has(t));
 
-  // Weighted blend: containment is a strong signal (near-guaranteed match)
-  // but shouldn't fully override a token-level mismatch on short strings.
-  return Math.max(jaccard, containment ? 0.85 + 0.15 * jaccard : jaccard);
+  const lengthRatio = Math.min(tokensA.length, tokensB.length) / Math.max(tokensA.length, tokensB.length);
+  const dampen = lengthRatio * lengthRatio;
+
+  const base = jaccard * dampen;
+  const boosted = contained ? (0.85 + 0.15 * jaccard) * dampen : 0;
+
+  return Math.max(base, boosted);
 }
 
 function looksLikeEpisode(name) {

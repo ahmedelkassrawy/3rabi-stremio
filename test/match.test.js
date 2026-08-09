@@ -53,7 +53,49 @@ test('bestMatch (movie kind) penalizes an obvious episode title enough to reject
 });
 
 test('bestMatch (series kind) still accepts an episode-shaped title', () => {
-  const candidates = [{ url: 'https://site/1', name: 'مسلسل Oppenheimer الحلقة 5' }];
+  // No trailing episode number here on purpose: 'الحلقة' is a decorator that
+  // strips away cleanly, leaving an exact normalized match ('oppenheimer')
+  // — isolating the kind:'series' vs kind:'movie' penalty as the only
+  // variable, rather than mixing it with the token-containment scoring.
+  const candidates = [{ url: 'https://site/1', name: 'مسلسل Oppenheimer الحلقة' }];
   const m = bestMatch('Oppenheimer', null, candidates, { kind: 'series' });
   assert.equal(m?.url, 'https://site/1');
+});
+
+test('normalizeTitle preserves a real word that merely contains a decorator as a substring', () => {
+  // 'كاملون' is not itself the decorator 'كامل' (only a whole-token exact
+  // match is stripped) — it must survive intact rather than get chopped
+  // into a stray fragment by a substring-based strip.
+  assert.equal(normalizeTitle('فيلم كاملون رائع'), 'كاملون رائع');
+});
+
+test('titleScore rejects a single-token containment false positive ("It" vs "Spirited Away")', () => {
+  const score = titleScore('It', 'Spirited Away 2001');
+  assert.ok(score < 0.6, `expected score < 0.6, got ${score}`);
+});
+
+test('titleScore rejects a single-token containment false positive ("Up" vs "Knocked Up")', () => {
+  const score = titleScore('Up', 'Knocked Up 2007');
+  assert.ok(score < 0.6, `expected score < 0.6, got ${score}`);
+});
+
+test('titleScore rejects a subset-title false positive ("The Office" vs "The Office Ladies")', () => {
+  const score = titleScore('The Office', 'The Office Ladies 2021');
+  assert.ok(score < 0.6, `expected score < 0.6, got ${score}`);
+});
+
+test('bestMatch rejects the three verified containment false positives, still matches Oppenheimer', () => {
+  assert.equal(bestMatch('It', null, [{ url: 'x', name: 'Spirited Away 2001' }], { kind: 'movie' }), null);
+  assert.equal(bestMatch('Up', null, [{ url: 'x', name: 'Knocked Up 2007' }], { kind: 'movie' }), null);
+  assert.equal(
+    bestMatch('The Office', null, [{ url: 'x', name: 'The Office Ladies 2021' }], { kind: 'series' }),
+    null
+  );
+  const m = bestMatch(
+    'Oppenheimer',
+    2023,
+    [{ url: 'https://site/2', name: 'فيلم Oppenheimer 2023 مترجم اون لاين' }],
+    { kind: 'movie' }
+  );
+  assert.equal(m?.url, 'https://site/2');
 });

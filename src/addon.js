@@ -125,7 +125,11 @@ async function streamsFromProvider(provider, { type, imdbBase, name, year, seaso
       if (!supportsSeries) return [];
 
       const results = await provider.getCatalog({ search: name, type: 'series' });
-      const m = bestMatch(name, null, results, { kind: 'series' });
+      // Pass the Cinemeta year through here too: bestMatch's year guard only
+      // *rejects* a candidate whose own detected year is >1 off (a
+      // candidate with no detectable year just takes a small penalty), so
+      // it's a free disambiguation signal against same-titled shows.
+      const m = bestMatch(name, year, results, { kind: 'series' });
       if (!m) return [];
 
       const meta = await provider.getMeta({ url: m.url });
@@ -184,3 +188,8 @@ builder.defineStreamHandler(async ({ type, id }) => {
 });
 
 module.exports = builder.getInterface();
+// Exposed for test/addon.test.js: the direct-vs-proxy/ipBound mapping is the
+// most playback- and security-sensitive piece of this file (it decides what
+// headers/URLs a client is handed), so it gets its own network-free unit
+// tests rather than only being exercised indirectly via the stream handler.
+module.exports.toStremioStreams = toStremioStreams;
